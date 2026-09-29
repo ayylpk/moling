@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    // ---- Bun 运行环境 ----
+    "lib": ["ESNext"],
+    "target": "ESNext",
+    "module": "Preserve",
+    "moduleDetection": "force",
+    "moduleResolution": "bundler",
+    "allowJs": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "verbatimModuleSyntax": true,
+    "types": ["bun"],
+
+    // ---- Hono JSX ----
+    "jsx": "react-jsx",
+    "jsxImportSource": "hono/jsx",
+
+    // ---- 严格检查 ----
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true
+  }
+}
