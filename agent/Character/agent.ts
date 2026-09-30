@@ -55,3 +55,7 @@ export function createCharacterAgent(model: BaseChatModel = createModel(0.4)){
   "already exists — call listCharacters first and reuse.",
   })
 };
+
+export const characterAgent = process.env.API_KEY || process.env.ANTHROPIC_AUTH_TOKEN
+  ? createCharacterAgent()
+  : undefined
