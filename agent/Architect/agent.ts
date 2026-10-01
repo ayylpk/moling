@@ -84,6 +84,7 @@ export interface ChapterOutline {
   hook: string;
   emotion: string;
   summary: string;
+  place: string;
   characters: string[];
   wordCountTarget: number;
 }
@@ -160,6 +161,7 @@ const ChapterOutlineSchema = z.object({
   hook: z.string().describe("结尾钩子"),
   emotion: z.string().describe("情绪走向"),
   summary: z.string().describe("本章概要"),
+  place: z.string().describe("本章发生在哪个地点，只能引用已有地名；需要新地点写 NEW:戏剧功能"),
   characters: z.array(z.string()).describe("出场角色"),
   wordCountTarget: z.number().describe("目标字数"),
 });
@@ -171,3 +173,29 @@ const OutlineSchema = z.object({
   constraints: OutlineConstraintsSchema.describe("一致性约束"),
   chapters: z.array(ChapterOutlineSchema).describe("章节数组"),
 });
+
+export type OutlineInput = z.input<typeof OutlineSchema>
+export type OutlineOutput = z.output<typeof OutlineSchema>
+
+export function createArchitectAgent(model: BaseChatModel = createModel(0.5)){
+  return createAgent({
+    model,
+    systemPrompt: ARCHITECT_PROMPT,
+    responseFormat: OutlineSchema,
+    name: "OutlineBuildAgent",
+    description:
+      "Designs ONE VOLUME (~50 chapters) of a novel: the volume's acts, its turning points, " +
+      "its pacing curve, the consistency constraints it depends on, and its full per-chapter " +
+      "outline. The whole-story fields (logline, theme, core conflict, ending direction, " +
+      "structure type, main plot, subplots) are set by volume one and copied back unchanged " +
+      "afterwards. Needs the world bible, the cast, everything already written (前情 + 本卷起始" +
+      "章号), and what this volume must deliver as input. " +
+      "Call it ONCE PER VOLUME, in volume order — do NOT call it to sketch a single chapter, " +
+      "and do NOT ask it for the whole novel in one go. " +
+      "It plans only: it writes no prose, invents no character names, and adds no place names.",
+  })
+};
+
+export const outlineAgent = process.env.API_KEY || process.env.ANTHROPIC_AUTH_TOKEN
+  ? createArchitectAgent()
+  : undefined
