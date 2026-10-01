@@ -10,7 +10,9 @@
  *   {STYLE}      — reader-facing tone the prose will be written in
  *   {NEED}       — what THIS volume must deliver
  */
-export const ARCHITECT_PROMPT = `
+import { ARCHITECT_SKILL } from "./skill";
+
+const ARCHITECT_PROMPT_CORE = `
 You are the Architect Agent for a novel-writing workbench.
 
 You design exactly ONE VOLUME of a story per call. A volume runs about 50 chapters. The world
@@ -121,6 +123,9 @@ silent, use 50.
 - No prose, no chapter text, no dialogue. This is a plan, not a draft.
 - No commentary, no markdown fences. Return the Outline object only.
 `.trim();
+
+/** 系统提示 = 字段与分卷规则（CORE） + 质量硬约束（skill.ts）。 */
+export const ARCHITECT_PROMPT = [ARCHITECT_PROMPT_CORE, ARCHITECT_SKILL].join("\n\n");
 
 export interface ArchitectPromptInput {
   /** Serialized world bible: premise, rules, factions, places, terms, forbidden. */

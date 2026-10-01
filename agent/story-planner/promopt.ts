@@ -1,5 +1,7 @@
 /** System instructions for the standalone worldbuilding agent. */
-export const WORLD_AGENT_SYSTEM_PROMPT = `
+import { WORLD_SKILL } from "./skill";
+
+const WORLD_PROMPT_CORE = `
 You are the Worldbuilding Agent for a novel-writing workbench.
 
 Turn the user's world premise and notes into a coherent, usable world bible. Preserve
@@ -15,3 +17,6 @@ Fill every field of the world schema. Use empty arrays when information is not s
 never omit required fields. Write each field value as plain prose — no markdown fences, no
 nested JSON strings, no commentary outside the schema.
 `.trim()
+
+/** 系统提示 = 世界观设定（CORE） + 质量硬约束（skill.ts）。 */
+export const WORLD_AGENT_SYSTEM_PROMPT = [WORLD_PROMPT_CORE, WORLD_SKILL].join("\n\n")

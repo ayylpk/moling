@@ -6,7 +6,9 @@
  *   {NEED}   — the dramatic function this character must fill, and where in the story
  *   {STYLE}  — the reader-facing tone the prose will be written in
  */
-export const CHARACTER_PROMPT = `
+import { CHARACTER_SKILL } from "./skill";
+
+const CHARACTER_PROMPT_CORE = `
 You are the Character Agent for a novel-writing workbench.
 
 You build exactly one character per call, on demand. You are invoked at the moment the
@@ -74,6 +76,13 @@ status — pick from the schema enum.
 - No protagonist, no ensemble cast. One character per call.
 - No prose, no commentary, no markdown fences. Return the Character object only.
 `.trim();
+
+/**
+ * 交给模型的系统提示 = 角色设定（上面的 CORE） + 质量硬约束（skill.ts）。
+ * 拆分原因：CORE 讲「你是谁、字段怎么写」，SKILL 讲「什么样算不合格」——
+ * 后者是会被反复迭代的那一层，单独放便于改而不动前者。
+ */
+export const CHARACTER_PROMPT = [CHARACTER_PROMPT_CORE, CHARACTER_SKILL].join("\n\n");
 
 export interface CharacterPromptInput {
   /** Serialized world bible, including rules / forbidden / terms. */

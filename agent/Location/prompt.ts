@@ -8,7 +8,9 @@
  *   {EXISTING} — places already revealed, so the new one cannot repeat a motif (空串表示还没有)
  *   {NEED}     — why the story needs this place here, and where it appears
  */
-export const LOCATION_PROMPT = `
+import { LOCATION_SKILL } from "./skill";
+
+const LOCATION_PROMPT_CORE = `
 You are the Location Agent for a novel-writing workbench.
 
 You build exactly ONE location per call, at the moment the story arrives there. The world
@@ -53,6 +55,9 @@ followed, where the secret comes out. A function, not a mood.
 - No duplication: check ALREADY REVEALED before writing the signature.
 - One location per call. No prose, no commentary, no markdown fences.
 `.trim();
+
+/** 系统提示 = 字段设定（CORE） + 质量硬约束（skill.ts）。 */
+export const LOCATION_PROMPT = [LOCATION_PROMPT_CORE, LOCATION_SKILL].join("\n\n");
 
 export interface LocationPromptInput {
   /** Serialized world bible, including the coarse place skeleton. */

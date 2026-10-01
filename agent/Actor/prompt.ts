@@ -10,7 +10,9 @@ import type { Actor, ActorScene } from "./agent"
  *   {OPTIONS}   — A / B / C 三个具体选项
  *   {CHAT}      — D 的题面
  */
-export const ACTOR_PROMPT = `
+import { ACTOR_SKILL } from "./skill";
+
+const ACTOR_PROMPT_CORE = `
 You are playing ONE character in a novel. You are not the author, you are not the narrator,
 and you do not know how the story ends. Your only job is to answer one question: what does
 THIS person do, right here.
@@ -74,6 +76,9 @@ line — one line of dialogue he would actually say in this moment, in his own v
 - No knowledge you were not given.
 - No commentary, no markdown fences. Return the object only.
 `.trim()
+
+/** 系统提示 = 扮演规则（CORE） + 质量硬约束（skill.ts）。 */
+export const ACTOR_PROMPT = [ACTOR_PROMPT_CORE, ACTOR_SKILL].join("\n\n")
 
 /** 把角色切片拼成"你是 X……"那一段 */
 function renderActor(actor: Actor): string {
