@@ -1,0 +1,269 @@
+@import './tokens.css';
+
+/* ---------- 底 & 纸纹 ---------- */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  background-color: var(--m-paper);
+  color: var(--m-ink);
+  font-family: var(--f-ui);
+  font-size: 15px;
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 宣纸底纹：真纸扫描图平铺（multiply 压住色调），四角微晕收边 */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  mix-blend-mode: multiply;
+  opacity: 0.55;
+  background:
+    radial-gradient(
+      120% 90% at 50% 40%,
+      transparent 62%,
+      rgba(90, 76, 52, 0.06) 100%
+    ),
+    url('/images/paper-xuan.jpg') repeat;
+  background-size: auto, 460px;
+}
+
+::selection {
+  background: var(--m-line-vermilion);
+}
+
+/* ---------- 页面骨架 ---------- */
+.page {
+  position: relative;
+  z-index: 1;
+  max-width: var(--page-max);
+  margin: 0 auto;
+  padding: clamp(40px, 7vh, 84px) clamp(24px, 5vw, 64px) 40px;
+}
+
+/* 入场上卷：一次编排，不逐节乱飞 */
+.enter { animation: rise 0.6s cubic-bezier(0.2, 0.6, 0.2, 1) both; }
+.d1 { animation-delay: 0.06s; }
+.d2 { animation-delay: 0.16s; }
+.d3 { animation-delay: 0.28s; }
+.d4 { animation-delay: 0.4s; }
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ---------- 报头 ---------- */
+.mast { position: relative; display: flex; align-items: flex-start; gap: 30px; }
+
+/* 远山横幅：压在报头右上纸面之下，下缘淡出如雾收 */
+.mast::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  right: -8px;
+  top: -54px;
+  width: min(620px, 62%);
+  height: 330px;
+  background: url('/images/ink-mountains.jpg') right center / cover no-repeat;
+  opacity: 0.16;
+  /* 双向遮罩取交：上缘轻收、左缘洇出、下缘没入纸面 */
+  -webkit-mask-image:
+    linear-gradient(180deg, rgba(0, 0, 0, 0.85) 12%, rgba(0, 0, 0, 0.92) 55%, transparent),
+    linear-gradient(90deg, transparent, rgba(0, 0, 0, 0.9) 22%);
+  mask-image:
+    linear-gradient(180deg, rgba(0, 0, 0, 0.85) 12%, rgba(0, 0, 0, 0.92) 55%, transparent),
+    linear-gradient(90deg, transparent, rgba(0, 0, 0, 0.9) 22%);
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
+  pointer-events: none;
+}
+
+@media (max-width: 640px) {
+  .mast::before { opacity: 0.1; height: 220px; }
+}
+
+.mast__band {
+  writing-mode: vertical-rl;
+  font-family: var(--f-display);
+  font-size: 40px;
+  font-weight: 400;
+  letter-spacing: 0.3em;
+  color: var(--m-ink);
+  border-left: 1px solid var(--m-line-vermilion);
+  padding-left: 14px;
+}
+
+.mast__meta { padding-top: 10px; }
+
+.mast__sub {
+  font-family: var(--f-manuscript);
+  font-size: 15px;
+  letter-spacing: 0.08em;
+  color: var(--m-ink-2);
+}
+
+.mast__tag {
+  margin-top: 10px;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  color: var(--m-ink-3);
+}
+
+/* ---------- 章节题：闲章记号 + 界行长线 ---------- */
+.sec { margin-top: clamp(44px, 8vh, 76px); }
+
+.sec-title { display: flex; align-items: center; gap: 14px; margin-bottom: 30px; }
+
+.sec-title .mark {
+  flex: none;
+  width: 27px; height: 27px;
+  display: grid; place-items: center;
+  border: 1.5px solid var(--m-cinnabar);
+  border-radius: var(--radius-fine);
+  color: var(--m-cinnabar);
+  font-family: var(--f-display);
+  font-size: 16px;
+}
+
+.sec-title .name {
+  font-family: var(--f-display);
+  font-size: 20px;
+  letter-spacing: 0.2em;
+  color: var(--m-ink);
+}
+
+.sec-title .rule { flex: 1; height: 1px; background: var(--m-line); }
+
+/* ---------- 色签 · 试色 ---------- */
+.swatches { display: flex; flex-wrap: wrap; gap: 26px; }
+
+.swatch { width: 52px; }
+
+.swatch__chip {
+  display: block;
+  height: 190px;
+  border-radius: var(--radius-fine);
+  box-shadow: inset 0 0 0 1px rgba(33, 30, 24, 0.08);
+  /* 上缘淡出，如墨在纸上洇开 */
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 16px);
+  mask-image: linear-gradient(180deg, transparent 0, #000 16px);
+}
+
+.swatch__name {
+  margin-top: 12px;
+  height: 68px;
+  writing-mode: vertical-rl;
+  font-family: var(--f-display);
+  font-size: 15px;
+  letter-spacing: 0.32em;
+  color: var(--m-ink);
+}
+
+.swatch__hex {
+  margin-top: 4px;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--m-ink-3);
+  white-space: nowrap;
+}
+
+/* ---------- 字体样例 ---------- */
+.types {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  row-gap: 30px;
+  column-gap: 26px;
+  align-items: baseline;
+}
+
+.types__label {
+  font-family: var(--f-display);
+  font-size: 15px;
+  letter-spacing: 0.18em;
+  color: var(--m-ink-3);
+  text-align: right;
+}
+
+.types__sample--display {
+  font-family: var(--f-display);
+  font-size: clamp(26px, 3.4vw, 34px);
+  letter-spacing: 0.12em;
+  color: var(--m-ink);
+}
+
+.types__sample--manuscript {
+  font-family: var(--f-manuscript);
+  font-size: 17px;
+  line-height: 2.05;
+  max-width: 58ch;
+  color: var(--m-ink);
+}
+
+.types__sample--ui { display: flex; flex-wrap: wrap; gap: 12px; }
+
+.types__sample--ui span {
+  font-size: 13px;
+  color: var(--m-ink-2);
+  border: 1px solid var(--m-line);
+  border-radius: var(--radius-fine);
+  padding: 4px 12px;
+  background: var(--m-paper);
+}
+
+.types__sample--ui span.is-primary {
+  color: var(--m-paper);
+  background: var(--m-cinnabar);
+  border-color: var(--m-cinnabar);
+}
+
+.types__sample--ui span.is-info { color: var(--m-indigo); border-color: rgba(51, 86, 107, 0.4); }
+
+/* ---------- 水印 & 页脚 ---------- */
+.watermark {
+  position: fixed;
+  right: -30px;
+  bottom: -110px;
+  z-index: 0;
+  font-family: var(--f-display);
+  font-size: 420px;
+  line-height: 1;
+  color: rgba(33, 30, 24, 0.045);
+  pointer-events: none;
+  user-select: none;
+}
+
+.foot {
+  margin-top: clamp(56px, 10vh, 96px);
+  padding-top: 16px;
+  border-top: 1px solid var(--m-line);
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  color: var(--m-ink-3);
+}
+
+/* ---------- 窄屏 ---------- */
+@media (max-width: 640px) {
+  .mast { gap: 20px; }
+  .mast__band { font-size: 32px; }
+  .types { grid-template-columns: 1fr; row-gap: 10px; }
+  .types__label { text-align: left; }
+  .swatch { width: 44px; }
+  .swatch__chip { height: 140px; }
+}
+
+/* ---------- 减少动态 ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

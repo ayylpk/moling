@@ -1,0 +1,128 @@
+/* ============================================================
+   启动页 · 玄墨底，笔意扫出「墨灵」，朱砂落章，约 1 秒
+   ============================================================ */
+.splash {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: var(--m-night);
+  display: grid;
+  place-items: center;
+  transition: opacity 0.45s ease, visibility 0.45s;
+}
+
+.splash--out {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.splash__stack {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 22px;
+}
+
+/* 「墨灵」二字：clip-path 自左向右扫出，如笔锋行过，附带起收的微虚化 */
+.splash__word {
+  font-family: var(--f-display);
+  font-weight: 400;
+  font-size: clamp(64px, 12vw, 104px);
+  letter-spacing: 0.18em;
+  line-height: 1;
+  color: var(--m-paper);
+  animation: brush 0.82s cubic-bezier(0.3, 0.7, 0.2, 1) both;
+}
+
+@keyframes brush {
+  from {
+    clip-path: inset(0 100% -10% -6%);
+    filter: blur(3px);
+  }
+  to {
+    clip-path: inset(-10% -6% -10% -6%);
+    filter: blur(0);
+  }
+}
+
+/* 白文印（红底白字），字后落下：缩放收住。印章自带 -6° 斜角，此处归零即可 */
+.splash__seal {
+  flex: none;
+  display: block;
+  animation: stamp 0.36s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+  animation-delay: 0.82s;
+}
+
+@keyframes stamp {
+  from {
+    opacity: 0;
+    transform: scale(1.9) rotate(-10deg);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+  }
+}
+
+/* 印面下方一点洇开的墨晕，落章的分量感 */
+.splash__bleed {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 340px;
+  height: 340px;
+  transform: translate(-30%, -50%);
+  background: radial-gradient(
+    circle,
+    rgba(181, 56, 44, 0.16) 0%,
+    transparent 65%
+  );
+  opacity: 0;
+  animation: bleed-in 0.8s ease-out both;
+  animation-delay: 0.92s;
+  pointer-events: none;
+}
+
+@keyframes bleed-in {
+  from { opacity: 0; transform: translate(-30%, -50%) scale(0.6); }
+  to   { opacity: 1; transform: translate(-30%, -50%) scale(1); }
+}
+
+/* ---------- 印章本体（启动页/首页共用） ---------- */
+.seal {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  place-items: center;
+  background: var(--m-cinnabar);
+  color: var(--m-paper);
+  font-family: var(--f-display);
+  font-size: 14px;
+  line-height: 1;
+  border-radius: 3px;
+  transform: rotate(-6deg);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
+}
+
+.seal--small {
+  width: 30px;
+  height: 30px;
+  font-size: 10px;
+  border-radius: 2px;
+}
+
+/* 单字闲章：占满印面，字放大 */
+.seal--one {
+  grid-template-columns: 1fr;
+  place-items: center;
+}
+
+.seal--one i {
+  font-size: 16px;
+}
+
+.seal--small.seal--one i {
+  font-size: 17px;
+}
