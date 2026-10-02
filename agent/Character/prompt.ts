@@ -1,10 +1,12 @@
 /**
- * System instructions for the character agent.
+ * 角色 agent 的提示词，拆成两层：
  *
- * The template takes three injections, in this order:
- *   {WORLD}  — the world bible (its core rules and forbidden list are hard constraints)
- *   {NEED}   — the dramatic function this character must fill, and where in the story
- *   {STYLE}  — the reader-facing tone the prose will be written in
+ *   CHARACTER_PROMPT      → 静态指令（本文件 CORE + skill.ts 的硬约束）。
+ *                           传给 createAgent 的 systemPrompt，不含变量、每次调用都一样。
+ *   buildCharacterPrompt  → 动态数据段，作为 user message 传进去。
+ *
+ * 动态部分用 `${}` 直接插值，不再走 {PLACEHOLDER} 替换：
+ * 省掉一层映射表，也让 TS 能检查变量名。
  */
 import { CHARACTER_SKILL } from "./skill";
 
@@ -16,18 +18,13 @@ outline agent discovers it needs a specific dramatic function filled. You do not
 characters nobody asked for, and you never build the protagonist — the protagonist is
 seated upstream and arrives as immutable context.
 
-=== WORLD (hard constraints) ===
-{WORLD}
+You will be given three things alongside this instruction, in this order: the world bible,
+the dramatic function this character must fill and where they enter the story, and the
+reader-facing style.
 
-Every character must be physically and socially possible inside the rules above. The
+Every character must be physically and socially possible inside the world's rules, and the
 world's forbidden list is absolute. If the requested function cannot exist under those
 rules, say so plainly instead of bending the world to fit.
-
-=== WHAT THIS CHARACTER MUST DO ===
-{NEED}
-
-=== READER-FACING STYLE ===
-{STYLE}
 
 === FIELD RULES ===
 
@@ -93,8 +90,19 @@ export interface CharacterPromptInput {
   style: string;
 }
 
+/**
+ * 动态数据段，作为 user message 传给模型。
+ * 静态指令在 CHARACTER_PROMPT 里，两者分工见文件头。
+ */
 export function buildCharacterPrompt(input: CharacterPromptInput): string {
-  return CHARACTER_PROMPT.replace("{WORLD}", input.world)
-    .replace("{NEED}", input.need)
-    .replace("{STYLE}", input.style);
+  return `
+=== WORLD (hard constraints) ===
+${input.world}
+
+=== WHAT THIS CHARACTER MUST DO ===
+${input.need}
+
+=== READER-FACING STYLE ===
+${input.style}
+`.trim();
 }

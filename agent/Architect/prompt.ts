@@ -1,14 +1,12 @@
 /**
- * System instructions for the architect agent.
+ * 架构师 agent 的提示词，拆成两层：
+ *
+ *   ARCHITECT_PROMPT      → 静态指令（本文件 CORE + skill.ts 的硬约束），传给 systemPrompt。
+ *   buildArchitectPrompt  → 动态数据段（WORLD / CAST / PREVIOUS / STYLE / NEED），作为 user message。
+ *
+ * 动态部分用 `${}` 直接插值，不再走 {PLACEHOLDER} 替换。
  *
  * 一次调用 = 一卷（约 50 章）。全篇由中心 agent 逐卷、按顺序调用本 agent 生成。
- *
- * The template takes five injections, in this order:
- *   {WORLD}      — the world bible; rules / forbidden / places are hard constraints
- *   {CHARACTERS} — characters already built; the only cast this volume may use
- *   {PREVIOUS}   — everything already written (已出各卷摘要 + 全篇锚点 + 本卷起始章号)
- *   {STYLE}      — reader-facing tone the prose will be written in
- *   {NEED}       — what THIS volume must deliver
  */
 import { ARCHITECT_SKILL } from "./skill";
 
@@ -25,20 +23,9 @@ conflict to a real turn, and end on a hook that makes the next volume necessary.
 spend this volume's chapters on events that belong further ahead, and do not replay what
 PREVIOUS already covers.
 
-=== WORLD (hard constraints) ===
-{WORLD}
-
-=== CAST (the only characters you may use) ===
-{CHARACTERS}
-
-=== PREVIOUS (已发生的全部前情 + 本卷起始章号) ===
-{PREVIOUS}
-
-=== READER-FACING STYLE ===
-{STYLE}
-
-=== WHAT THIS VOLUME MUST DELIVER ===
-{NEED}
+You will be given five sections alongside this instruction, labelled WORLD, CAST, PREVIOUS,
+READER-FACING STYLE, and WHAT THIS VOLUME MUST DELIVER. Where a rule below names CAST or
+PREVIOUS, it means that section.
 
 === VOLUME SCOPE ===
 
@@ -143,10 +130,22 @@ export interface ArchitectPromptInput {
   need: string;
 }
 
+/** 动态数据段，作为 user message 传给模型。静态指令在 ARCHITECT_PROMPT 里。 */
 export function buildArchitectPrompt(input: ArchitectPromptInput): string {
-  return ARCHITECT_PROMPT.replace("{WORLD}", input.world)
-    .replace("{CHARACTERS}", input.characters)
-    .replace("{PREVIOUS}", input.previous)
-    .replace("{STYLE}", input.style)
-    .replace("{NEED}", input.need);
+  return `
+=== WORLD (hard constraints) ===
+${input.world}
+
+=== CAST (the only characters you may use) ===
+${input.characters}
+
+=== PREVIOUS (已发生的全部前情 + 本卷起始章号) ===
+${input.previous}
+
+=== READER-FACING STYLE ===
+${input.style}
+
+=== WHAT THIS VOLUME MUST DELIVER ===
+${input.need}
+`.trim();
 }

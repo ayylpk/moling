@@ -1,12 +1,12 @@
 /**
- * System instructions for the location agent.
+ * 地点 agent 的提示词，拆成两层：
+ *
+ *   LOCATION_PROMPT      → 静态指令（本文件 CORE + skill.ts 的硬约束），传给 systemPrompt。
+ *   buildLocationPrompt  → 动态数据段，作为 user message 传进去。
+ *
+ * 动态部分用 `${}` 直接插值，不再走 {PLACEHOLDER} 替换。
  *
  * Genre-neutral: 玄幻的秘境、都市的酒吧、校园的天台，在这里都是同一件事。
- *
- * The template takes three injections, in this order:
- *   {WORLD}    — the world bible; it only fixes the coarse skeleton
- *   {EXISTING} — places already revealed, so the new one cannot repeat a motif (空串表示还没有)
- *   {NEED}     — why the story needs this place here, and where it appears
  */
 import { LOCATION_SKILL } from "./skill";
 
@@ -22,14 +22,9 @@ This agent is genre-neutral. A sealed valley, a bar in the city, a rooftop at sc
 they are the same job. Build whatever this world actually is; do not import genre furniture
 that the world bible does not have.
 
-=== WORLD (hard constraints) ===
-{WORLD}
-
-=== ALREADY REVEALED ===
-{EXISTING}
-
-=== WHAT THIS PLACE MUST DO ===
-{NEED}
+You will be given three things alongside this instruction, in this order: the world bible
+(it only fixes the coarse skeleton), the places already revealed, and why the story needs
+this place here.
 
 === FIELD RULES ===
 
@@ -68,8 +63,16 @@ export interface LocationPromptInput {
   need: string;
 }
 
+/** 动态数据段，作为 user message 传给模型。静态指令在 LOCATION_PROMPT 里。 */
 export function buildLocationPrompt(input: LocationPromptInput): string {
-  return LOCATION_PROMPT.replace("{WORLD}", input.world)
-    .replace("{EXISTING}", input.existing)
-    .replace("{NEED}", input.need);
+  return `
+=== WORLD (hard constraints) ===
+${input.world}
+
+=== ALREADY REVEALED ===
+${input.existing}
+
+=== WHAT THIS PLACE MUST DO ===
+${input.need}
+`.trim();
 }

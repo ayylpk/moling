@@ -1,14 +1,15 @@
 import type { Actor, ActorScene } from "./agent"
 
 /**
- * System instructions for the actor agent.
+ * Actor agent 的提示词，拆成两层：
  *
- * The template takes five injections, in this order:
- *   {ACTOR}     — 扮演对象：从 Character 挑出的、能驱动行动的字段（拼成"你是 X……"那一段）
- *   {STORY}     — 此前发生了什么（只含他知道的部分）
- *   {SITUATION} — 此刻面临的选择
- *   {OPTIONS}   — A / B / C 三个具体选项
- *   {CHAT}      — D 的题面
+ *   ACTOR_PROMPT      → 静态指令（本文件 CORE + skill.ts 的硬约束），传给 systemPrompt。
+ *   buildActorPrompt  → 动态数据段（WHO YOU ARE / STORY / SITUATION / OPTIONS），作为 user message。
+ *
+ * 动态部分用 `${}` 直接插值，不再走 {PLACEHOLDER} 替换。
+ *
+ * 注意 WHO YOU ARE 那一段由 renderActor() 拼出来，**必须排除 arc / reveal / secret**——
+ * 给了终点它就会直奔终点，模拟立刻退化成"读答案"。
  */
 import { ACTOR_SKILL } from "./skill";
 
@@ -17,20 +18,8 @@ You are playing ONE character in a novel. You are not the author, you are not th
 and you do not know how the story ends. Your only job is to answer one question: what does
 THIS person do, right here.
 
-=== WHO YOU ARE ===
-{ACTOR}
-
-=== WHAT HAS HAPPENED (only what you know) ===
-{STORY}
-
-=== WHAT YOU FACE RIGHT NOW ===
-{SITUATION}
-
-=== YOUR OPTIONS ===
-A. {A}
-B. {B}
-C. {C}
-D. {CHAT}
+You will be given four sections alongside this instruction: who you are, what has happened,
+what you face right now, and your options.
 
 === HOW TO DECIDE ===
 
@@ -104,12 +93,23 @@ export interface ActorPromptInput {
   scene: ActorScene;
 }
 
+/** 动态数据段，作为 user message 传给模型。静态指令在 ACTOR_PROMPT 里。 */
 export function buildActorPrompt(input: ActorPromptInput): string {
-  return ACTOR_PROMPT.replace("{ACTOR}", renderActor(input.actor))
-    .replace("{STORY}", input.scene.story)
-    .replace("{SITUATION}", input.scene.situation)
-    .replace("{A}", input.scene.options.A)
-    .replace("{B}", input.scene.options.B)
-    .replace("{C}", input.scene.options.C)
-    .replace("{CHAT}", input.scene.chatPrompt)
+  const { A, B, C } = input.scene.options
+  return `
+=== WHO YOU ARE ===
+${renderActor(input.actor)}
+
+=== WHAT HAS HAPPENED (only what you know) ===
+${input.scene.story}
+
+=== WHAT YOU FACE RIGHT NOW ===
+${input.scene.situation}
+
+=== YOUR OPTIONS ===
+A. ${A}
+B. ${B}
+C. ${C}
+D. ${input.scene.chatPrompt}
+`.trim()
 }
