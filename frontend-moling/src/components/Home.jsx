@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import Seal from './Seal.jsx';
 
 /**
@@ -41,6 +42,13 @@ export default function Home() {
           <p className="mast__tag">从选题、大纲、角色、剧情到文风，一体成书</p>
           <div style={{ marginTop: 18 }}>
             <Seal small chars={['灵']} />
+          </div>
+          {/* v0.2 新增的唯一出口：开卷进工作台 */}
+          <div className="mast__cta">
+            <Link to="/w/desk" className="btn btn--primary">
+              开卷 · 进工作台
+            </Link>
+            <span className="anno">书架 / 选题 / 大纲 / 角色 / 剧情 / 文风 / 书稿 / 设定</span>
           </div>
         </div>
       </header>
@@ -88,8 +96,8 @@ export default function Home() {
       </section>
 
       <footer className="foot enter d3">
-        <span>墨灵 · frontend-moling · 空壳 v0.1</span>
-        <span>React + Vite · 本机字体 · 无外部依赖</span>
+        <span>墨灵 · frontend-moling · 壳 v0.2（工作台框架立起，数据待接）</span>
+        <span>React + Vite + Router · 本机字体 · 无 UI 库</span>
       </footer>
     </main>
   );

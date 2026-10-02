@@ -57,7 +57,7 @@
 - 纸纹 = `paper-xuan.jpg` 真纸扫描平铺（multiply 混合、透明度 0.55、460px 一循环）+ 四角微晕；素材见第六节。
 - 报头右上压"远山"横幅：`ink-mountains.jpg`，透明度 0.16，双向 mask 取交（上缘轻收、左缘洇出、下缘没入纸面），永不参与可读层。
 
-### 待建：业务工作台的页面框架（下一期的壳）
+### 已建（10/2 v0.2）：业务工作台的页面框架
 
 ```
 ┌─────────┬────────────────────────────────┐
@@ -78,6 +78,24 @@
 - 顶栏 56px：信息密度低，字数、保存态、Agent（笔灵）状态三枚小示签。
 - 书稿页三栏：章目录(200px) / 正文(≤68ch 居中) / 大纲浮签(可收起)。
 - Agent 五模块对应五个页面壳，全部复用同一 `page + sec-title` 骨架。
+
+10/2 落地补充（v0.2 壳）：
+
+| 路由（hash） | 入口 | 数据契约（接数时照此写 fetch，不改版式） |
+|---|---|---|
+| `/#/` | 题签页（v0.1 首页，报头加「开卷」主按钮） | — |
+| `/#/w/desk` | 工作台 · 书架 | `GET /api/novels` + `…/:id/generation`（六阶进度） |
+| `/#/w/topic` | 选题 | outline.json → `direction`（logline/theme/coreConflict/endingDirection） |
+| `/#/w/outline` | 大纲 | `structure.acts` 三幕 + `pacing.tensionCurve` 张力条 + `constraints` |
+| `/#/w/cast` | 角色 | cast.json → `protagonists[]`（voice/want/cost/need/secret/immutable） |
+| `/#/w/plot` | 剧情 | outline.json → `chapters[]`（goal/conflict/hook/emotion 事件账表） |
+| `/#/w/style` | 文风 | `novels.style` + `worlds.terms[]`（白名单表）+ `forbidden[]`（赭石 chip） |
+| `/#/w/manuscript` | 书稿 | artifact md 正文 + `chapters[i].hook/emotion` 浮签（可收起） |
+| `/#/w/world` | 设定 | `GET /api/worlds/current?novelId=`（版本签 v1 挂朱点=激活） |
+
+- 侧栏八入口顺序 = 写书动线；单字轨 台题纲色情风稿设（窄屏 ≤920px 收成 58px 竖排字轨）。
+- 壳期所有静态数据戴「示例」小角标；淡墨注写明接口出处，接数删注不改版。
+- 错误/空/骨架三态：空=淡烟 EmptyState；骨架=旧宣实条（不做流光）；失败=深朱（印泥沉），错误态永不正朱。
 
 ## 五、红线（勿越）
 
@@ -108,7 +126,7 @@
 
 ## 七、工程约定
 
-- React 19 + Vite 7，纯 CSS 变量，无 UI 库；引库先议（本壳零依赖是刻意的）。
+- React 19 + Vite 7 + react-router-dom（10/2 引，唯一新增依赖；HashRouter——将来静态托管免 rewrite）。纯 CSS 变量，仍无 UI 库；再引库先议。
 - 起壳指令：`npm install` → `npm run dev`（5173）。
-- 后端/Agent 定端口后，在 `vite.config.js` 加 `server.proxy`，前端勿写死绝对地址。
-- 页面组件放 `src/pages/`，布局件放 `src/layout/`，路由下一期再引 `react-router-dom`。
+- 后端已定端口 :3000（Hono/Bun，入口 agent/my-app/src/index.ts）。`vite.config.js` 已配 `server.proxy: /api → :3000`；前端一律相对路径，勿写死绝对地址。接口总表在 `src/api/endpoints.js`（只登记后端已有的路由）；后端枚举镜像在 `src/lib/enums.js`（权威 = agent/db/types/entity.ts，两头对不上以 entity.ts 为准）。
+- 页面组件在 `src/pages/`，布局件在 `src/layout/`，共用零件类名一律取 `src/styles/workbench.css` 的词汇表，禁各页自造同义词。
