@@ -5,32 +5,16 @@
  * 不写 SQL、不做业务判断、不碰 DTO/VO 的转换，那些都在 service。
  *
  * 挂载点在 src/index.ts：app.route('/api/worlds', storyPlannerController)
+ *
+ * 三个小工具（parseId / fail / readJson）已提到 shared/http.ts —— 现在有三个
+ * controller 用同一套，留在各自文件里就是抄三遍。
  */
 import { Hono } from 'hono'
-import type { Context } from 'hono'
 import * as service from '../service/storyPlannerService'
+import { parseId, fail, readJson } from '../shared/http'
 import type { CreateWorldDTO, UpdateWorldDTO } from '../../../db/types'
 
 export const storyPlannerController = new Hono()
-
-/* ==================== 小工具 ==================== */
-
-/** 把 URL 里的 :id 转成数字，不是整数就返回 null */
-const parseId = (raw: string | undefined): number | null =>
-  raw && /^\d+$/.test(raw) ? Number(raw) : null
-
-/** service 抛的业务错误统一转 400，别把异常糊成 500 */
-const fail = (c: Context, e: unknown) =>
-  c.json({ message: e instanceof Error ? e.message : String(e) }, 400)
-
-/** 读 JSON body，解析失败返回 undefined */
-const readJson = async <T>(c: Context): Promise<T | undefined> => {
-  try {
-    return (await c.req.json()) as T
-  } catch {
-    return undefined
-  }
-}
 
 /* ==================== 路由 ==================== */
 // 顺序有讲究：/brief、/search 这种固定路径必须写在 /:id 前面，
@@ -50,6 +34,21 @@ storyPlannerController.get('/brief', (c) => {
   const id = parseId(c.req.query('novelId'))
   if (id === null) return c.json({ message: 'novelId 必填且必须是整数' }, 400)
   return c.json(service.listWorldBriefs(id))
+})
+
+/**
+ * GET /api/worlds/current?novelId=1 —— 当前生效的那一版（版本号最大）。
+ *
+ * 下游（大纲/章节/正文）要世界观时应该走这个，而不是 /brief 的第一条 ——
+ * 让"取当前版本"这个决定在服务端做一次，别让每个调用方各自排序。
+ */
+storyPlannerController.get('/current', (c) => {
+  const id = parseId(c.req.query('novelId'))
+  if (id === null) return c.json({ message: 'novelId 必填且必须是整数' }, 400)
+
+  const world = service.getCurrentWorld(id)
+  if (!world) return c.json({ message: `novelId=${id} 还没有世界观` }, 404)
+  return c.json(world)
 })
 
 /** GET /api/worlds/search?kw=燃烧 —— 在规则文本里搜 */
@@ -73,7 +72,13 @@ storyPlannerController.get('/:id', (c) => {
   return c.json(world)
 })
 
-/** POST /api/worlds —— body 是 CreateWorldDTO */
+/**
+ * POST /api/worlds —— body 是 CreateWorldDTO。
+ *
+ * 不传 version 时自动建下一版。想改世界观内容就再 POST 一版，
+ * 别用 PATCH 原地改规则 —— 原地改的话下游那些基于旧版生成的产物
+ * 就成了无主之物，之后没法判断该不该重跑。
+ */
 storyPlannerController.post('/', async (c) => {
   const body = await readJson<CreateWorldDTO>(c)
   if (body === undefined) return c.json({ message: '请求体不是合法 JSON' }, 400)
@@ -85,7 +90,7 @@ storyPlannerController.post('/', async (c) => {
   }
 })
 
-/** PATCH /api/worlds/:id —— 只传要改的字段 */
+/** PATCH /api/worlds/:id —— 只传要改的字段。留给改错别字这种原地修正 */
 storyPlannerController.patch('/:id', async (c) => {
   const id = parseId(c.req.param('id'))
   if (id === null) return c.json({ message: 'id 必须是整数' }, 400)

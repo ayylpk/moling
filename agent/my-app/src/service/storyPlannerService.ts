@@ -7,9 +7,14 @@
  *   3. 组装 —— 把 db 层的原子操作拼成一个业务动作
  *
  * controller 只调这一层，不直接碰 db。
+ *
+ * 版本：一本小说可以有多版世界观。「改内容 = 新建一版」是推荐用法 ——
+ * 世界观一变下游全废，只有留版本才能回答"这一卷是基于哪一版生成的"。
+ * 想改错别字就用 updateWorld 原地改，想改规则就再 createWorld 一版。
  */
 import * as store from '../db/storyPlannerDB'
 import type { NewWorldRow, WorldRowPatch } from '../db/storyPlannerDB'
+import { now } from '../shared/time'
 import type {
   CreateWorldDTO,
   UpdateWorldDTO,
@@ -25,25 +30,9 @@ import type {
 /** 库里存 JSON 文本的 5 个字段 */
 const ARR_KEYS = ['rules', 'factions', 'places', 'terms', 'forbidden'] as const
 
-/* ==================== 时间 ==================== */
-
-/**
- * 生成和 SQLite datetime('now','localtime') 完全同格式的字符串：2026-09-28 18:12:11
- *
- * 为什么不用现成的：new Date().toISOString() 出来是 UTC 的 ISO 格式
- * （2026-09-28T10:12:11.000Z），跟库里已有的字符串格式对不上 ——
- * 混着存的话，字符串排序和比较全是错的。
- *
- * 格式要统一，就统一成 SQLite 这一套。
- */
-export const now = (): string => {
-  const d = new Date()
-  const p = (n: number) => String(n).padStart(2, '0')
-  return (
-    `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` +
-    `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
-  )
-}
+// now() 已提到 shared/time.ts（novelService / taskService 也要用同一个格式）。
+// 这里转一手，别处 `import { now } from '../service/storyPlannerService'` 的老写法继续有效。
+export { now }
 
 /* ==================== 转换 ==================== */
 
@@ -57,9 +46,10 @@ const toVO = (e: WorldEntity): WorldVO => ({
   forbidden: JSON.parse(e.forbidden) as string[],
 })
 
-/** DTO -> Entity 行：数组 stringify，没传的补空数组 */
-const toRow = (dto: CreateWorldDTO): NewWorldRow => ({
+/** DTO -> Entity 行：数组 stringify，没传的补空数组。version 由调用方算好传进来 */
+const toRow = (dto: CreateWorldDTO, version: number): NewWorldRow => ({
   novel_id: dto.novel_id,
+  version,
   name: dto.name.trim(),
   premise: dto.premise.trim(),
   rules: JSON.stringify(dto.rules ?? []),
@@ -78,6 +68,9 @@ const assertCreateDTO = (dto: CreateWorldDTO): void => {
   if (!Number.isInteger(dto.novel_id)) throw new TypeError('novel_id 必须是整数')
   if (!dto.name?.trim()) throw new TypeError('name 不能为空')
   if (!dto.premise?.trim()) throw new TypeError('premise 不能为空')
+  if (dto.version !== undefined && (!Number.isInteger(dto.version) || dto.version <= 0)) {
+    throw new TypeError('version 必须是正整数')
+  }
 
   for (const key of ARR_KEYS) {
     const v = dto[key]
@@ -104,10 +97,27 @@ const assertUpdateDTO = (dto: UpdateWorldDTO): void => {
 
 /* ==================== 业务 ==================== */
 
-/** 新建，返回建好的完整数据 */
+/**
+ * 新建一版世界观，返回建好的完整数据。
+ *
+ * version 不传时自动取「本小说已有最大版本 + 1」。
+ * INSERT 之前的 SELECT 和 INSERT 之间没有事务保护 —— 单进程单连接（bun:sqlite 同步）
+ * 下不会插队，等将来真并行了再包 withTransaction。
+ */
 export const createWorld = (dto: CreateWorldDTO): WorldVO => {
   assertCreateDTO(dto)
-  const id = store.insertWorld(toRow(dto))
+  const version = dto.version ?? store.selectMaxWorldVersion(dto.novel_id) + 1
+
+  let id: number
+  try {
+    id = store.insertWorld(toRow(dto, version))
+  } catch (e) {
+    // UNIQUE(novel_id, version)。撞了说明这一版已经建过
+    if (e instanceof Error && e.message.includes('UNIQUE constraint failed: worlds')) {
+      throw new TypeError(`novel_id=${dto.novel_id} 已经存在第 ${version} 版世界观`)
+    }
+    throw e
+  }
   // 刚插进去必然能查到；查不到说明连接或事务出了问题，宁可炸掉
   return toVO(store.selectWorld(id)!)
 }
@@ -115,6 +125,12 @@ export const createWorld = (dto: CreateWorldDTO): WorldVO => {
 /** 按 id 取一条，没有返回 null */
 export const getWorld = (id: number): WorldVO | null => {
   const e = store.selectWorld(id)
+  return e ? toVO(e) : null
+}
+
+/** 取这本小说当前生效的那一版（版本号最大的） */
+export const getCurrentWorld = (novelId: number): WorldVO | null => {
+  const e = store.selectCurrentWorld(novelId)
   return e ? toVO(e) : null
 }
 
