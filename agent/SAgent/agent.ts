@@ -40,8 +40,8 @@ import { subAgentTools, databaseTools } from "./tools"
 
 /* ==================== 可配常量 ==================== */
 
-/** 模型上下文窗口（token）。按实际用的模型调。 */
-const CONTEXT_WINDOW = Number(process.env.SAGENT_CONTEXT_WINDOW ?? 64_000)
+/** 模型上下文窗口（token）。当前按 DeepSeek 的 256K 算。 */
+const CONTEXT_WINDOW = Number(process.env.SAGENT_CONTEXT_WINDOW ?? 256_000)
 
 /** 压缩触发比例。用户要求：到 80% 启动。 */
 const COMPACT_TRIGGER_RATIO = Number(process.env.SAGENT_COMPACT_RATIO ?? 0.8)
