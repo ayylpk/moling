@@ -8,7 +8,25 @@
  * 注意：TS 的类型只在编译期存在，运行时传错照样能跑。
  * 要真拦住，得在函数里手写 Array.isArray 检查（见 service 层）。
  */
-import type { NovelStatus, Rule, Faction, Place, Term, Stage } from './entity'
+import type {
+  NovelStatus,
+  Rule,
+  Faction,
+  Place,
+  Term,
+  Stage,
+  CharacterRole,
+  CharacterStatus,
+  CharacterSource,
+  TextStage,
+  ActorChoiceValue,
+  Plotline,
+  Act,
+  TurningPoint,
+  PacingPlan,
+  OutlineConstraintsData,
+  ActorOptions,
+} from './entity'
 
 /* ==================== 小说 ==================== */
 
@@ -114,4 +132,201 @@ export interface TaskQueryDTO {
 export interface InvalidateDTO {
   /** 从这个阶段开始往下作废 */
   from_stage: Stage
+}
+
+/* ==================== 角色 ==================== */
+
+/**
+ * 建一张角色卡。
+ *
+ * `relations` 里写的是**名字**，不是 id —— agent 本来就只能写出名字。
+ * 落库时由 service 查表解析成 id，解析不到的留 NULL（不报错，因为
+ * 那个人可能真的还没建）。想显式表达"这里需要一个新人"，名字写成
+ * `NEW:戏剧功能`，它永远不会被解析，会一直留在待建清单里。
+ */
+export interface CreateCharacterDTO {
+  novel_id: number
+  name: string
+  role: CharacterRole
+  immutable?: string[]
+  voice?: string
+  want?: string
+  cost?: string
+  need?: string
+  secret?: string
+  reveal?: string
+  line?: string
+  flaw?: string
+  arc?: { start: string; end: string }
+  status?: CharacterStatus
+  /** 不传按 agent 算（产物）；手写的主角传 hand */
+  source?: CharacterSource
+  relations?: { raw: string; attitude: string }[]
+}
+
+export interface UpdateCharacterDTO {
+  name?: string
+  role?: CharacterRole
+  immutable?: string[]
+  voice?: string
+  want?: string
+  cost?: string
+  need?: string
+  secret?: string
+  reveal?: string
+  line?: string
+  flaw?: string
+  arc?: { start: string; end: string }
+  status?: CharacterStatus
+  source?: CharacterSource
+}
+
+export interface CharacterQueryDTO {
+  role?: CharacterRole
+  status?: CharacterStatus
+  /** 只看关系里指向了不存在角色的那些卡 */
+  unresolvedOnly?: boolean
+}
+
+/* ==================== 地点 ==================== */
+
+export interface CreateLocationDTO {
+  novel_id: number
+  name: string
+  /** 上级地点的名字。世界观只给了粗骨架，这里写名字，由 service 解析成 id */
+  parent?: string
+  signature: string
+  features?: string[]
+  role?: string
+}
+
+export interface UpdateLocationDTO {
+  name?: string
+  parent?: string
+  signature?: string
+  features?: string[]
+  role?: string
+}
+
+/* ==================== 卷 ==================== */
+
+export interface CreateVolumeDTO {
+  novel_id: number
+  no: number
+  name: string
+  goal: string
+  from_state: string
+  to_state: string
+  start_chapter: number
+  end_chapter: number
+}
+
+export interface UpdateVolumeDTO {
+  name?: string
+  goal?: string
+  from_state?: string
+  to_state?: string
+  start_chapter?: number
+  end_chapter?: number
+}
+
+/* ==================== 大纲 ==================== */
+
+export interface CreateAnchorDTO {
+  novel_id: number
+  logline: string
+  theme: string
+  core_conflict: string
+  ending_direction: string
+  structure_type: string
+  main_plot: Plotline
+  subplots?: Plotline[]
+  /** 哪一卷定的稿。第一卷传 1 */
+  locked_by_volume?: number
+}
+
+/**
+ * 保存一卷大纲。这一个 DTO 会落到 5 张表：
+ * volumes / outline_volumes / chapters / chapter_cast / generation_tasks。
+ * service 里必须包事务 —— 只写进去一半的库比彻底失败更难查。
+ */
+export interface SaveVolumeOutlineDTO {
+  novel_id: number
+  volume: CreateVolumeDTO
+  /** 本卷的结构 / 节奏 / 约束 */
+  outline: {
+    structure_type: string
+    acts: Act[]
+    turning_points: TurningPoint[]
+    pacing: PacingPlan
+    constraints: OutlineConstraintsData
+  }
+  /** 本卷回填的锚点，和已有锚点逐字比对，不一致就是漂移 */
+  anchor: Omit<CreateAnchorDTO, 'novel_id' | 'locked_by_volume'>
+  chapters: CreateChapterDTO[]
+}
+
+/* ==================== 章节 ==================== */
+
+export interface CreateChapterDTO {
+  /** 全篇连续的章号，不从 1 重开 */
+  idx: number
+  title: string
+  goal: string
+  conflict: string
+  hook: string
+  emotion: string
+  summary: string
+  /** 已有地名，或 `NEW:戏剧功能` */
+  place: string
+  characters: string[]
+  word_count_target?: number
+}
+
+export interface UpdateChapterDTO {
+  title?: string
+  goal?: string
+  conflict?: string
+  hook?: string
+  emotion?: string
+  summary?: string
+  place?: string
+  characters?: string[]
+  word_count_target?: number
+}
+
+export interface ChapterQueryDTO {
+  volume_id?: number
+  /** 章号区间，闭区间 */
+  from?: number
+  to?: number
+  /** 只看正文到哪个阶段的（outlined = 还没正文） */
+  textStage?: TextStage
+}
+
+/* ==================== 正文 ==================== */
+
+export interface SaveChapterTextDTO {
+  stage: TextStage
+  text: string
+  /** writer 写的本章概要，写回前情用 */
+  summary?: string
+  ends_with?: string
+  /** polisher 的改动清单 */
+  polish_report?: unknown
+}
+
+/* ==================== 角色裁决 ==================== */
+
+export interface SaveActorDecisionDTO {
+  chapter_id: number
+  /** 用名字，service 解析成 id。解析不到留 NULL */
+  character: string
+  situation: string
+  options: ActorOptions
+  choice: ActorChoiceValue
+  custom_answer?: string
+  reason: string
+  line: string
+  prompt_hash: string
 }

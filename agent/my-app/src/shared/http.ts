@@ -22,3 +22,11 @@ export const readJson = async <T>(c: Context): Promise<T | undefined> => {
     return undefined
   }
 }
+
+/**
+ * 取挂在 `/api/novels/:novelId/...` 下的小说 id。
+ *
+ * 所有内容接口的第一个参数都是它 —— novels 是整库的根，
+ * 没有 novelId 就没法把查询限定在一本小说里。
+ */
+export const novelIdOf = (c: Context): number | null => parseId(c.req.param('novelId'))
