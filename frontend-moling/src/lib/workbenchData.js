@@ -21,15 +21,40 @@ export const TOPIC_OPTIONS = ['玄幻', '都市', '恋爱', '悬疑', '历史'];
 export const STYLE_OPTIONS = ['细腻', '冷峻', '明快', '克制', '浓烈'];
 export const WORD_OPTIONS = ['5 万字', '10 万字', '20 万字', '50 万字'];
 
+/**
+ * 执笔画布的七盏灯（夜案 v0.5）。
+ * state 四档即明暗：running 亮 / done 常 / idle 暗 / failed 沉。
+ * reading/tokens/last 是悬停浮签的三行 —— 后端 /api/agents 接入后整表换掉，版式不动。
+ * （修 v0.4 遗留：chapter 一项当时漏写了 state，节点渲染成 is-undefined。）
+ */
 export const AGENTS = [
-  { id: 'world', name: '世界观', mark: '界', stage: 'world', state: 'done', summary: '规则、势力与专名表已立', detail: '当前版本 v1 · 13 条规则 · 6 个地点' },
-  { id: 'character', name: '角色', mark: '色', stage: 'character', state: 'running', summary: '正在整理周砚与林晚的关系弧', detail: '已完成 2 / 4 张角色卡' },
-  { id: 'location', name: '场景', mark: '景', stage: 'location', state: 'idle', summary: '等待角色关系确认后继续', detail: '待处理需求 3 条' },
-  { id: 'outline', name: '大纲', mark: '纲', stage: 'outline', state: 'done', summary: '第一卷三幕结构已锁定', detail: '第 1 卷 · 6 章草纲' },
-  { id: 'chapter', name: '章节', mark: '章', stage: 'idle', summary: '等待大纲变更通知', detail: '已完成 1 / 50 章' },
-  { id: 'writer', name: '写作', mark: '写', stage: 'chapter', state: 'running', summary: '正在生成第 2 章初稿', detail: '目标 3,000 字 · 已写 1,842 字' },
-  { id: 'polish', name: '润色', mark: '润', stage: 'polish', state: 'idle', summary: '等待初稿进入润色队列', detail: '上次完成第 1 章' },
+  { id: 'world', name: '世界观', mark: '界', stage: 'world', state: 'done',
+    reading: 'chapter-2 草稿里的地名引用', tokens: '41.2k', cap: '60k', pct: 69,
+    last: '昨日定稿 v1 · 13 条规则 · 9 个场景' },
+  { id: 'character', name: '角色', mark: '色', stage: 'character', state: 'running',
+    reading: '周砚 · 林晚 前 6 章对手戏', tokens: '18.7k', cap: '60k', pct: 31,
+    last: '刚补完林晚「秘密」槽位' },
+  { id: 'location', name: '场景', mark: '景', stage: 'location', state: 'idle',
+    reading: '等角色关系确认后开工', tokens: '0', cap: '60k', pct: 0,
+    last: '排队中 · 还有 9 张场景卡' },
+  { id: 'outline', name: '大纲', mark: '纲', stage: 'outline', state: 'done',
+    reading: '第 2 章章纲回校', tokens: '52.6k', cap: '60k', pct: 88,
+    last: '三幕 50 章已锁定' },
+  { id: 'chapter', name: '章节任务', mark: '章', stage: 'chapter', state: 'idle',
+    reading: '任务队列 ch:003 → ch:050', tokens: '—', cap: '—', pct: 0,
+    last: '1 / 50 已成 · 等执笔接手' },
+  { id: 'writer', name: '执笔', mark: '写', stage: 'chapter', state: 'running',
+    reading: '第 2 章章纲 + 角色卡 · 林晚', tokens: '12.4k', cap: '60k', pct: 21,
+    last: '正在写第 2 章初稿 · 1,842 / 3,000 字' },
+  { id: 'polish', name: '润色', mark: '润', stage: 'polish', state: 'idle',
+    reading: '禁语表 + 专名白名单', tokens: '0', cap: '60k', pct: 0,
+    last: '等初稿入队 · 上次完成第 1 章' },
 ];
+
+/** 案心一盏：中心 Agent（SAgent），浮签语单独标「正在协调」 */
+export const HUB = { id: 'hub', name: '中心 Agent', mark: '灵', state: 'running', stateLabel: '正在协调',
+  reading: '全书状态 · 第 2 章情绪曲线等人拍板', tokens: '148k', cap: '256k', pct: 58,
+  last: '在编子任务 3 · 昨日协调 17 次' };
 
 export const VOLUMES = [
   {

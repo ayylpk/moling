@@ -104,7 +104,7 @@
 .ws .modeswitch__tab.is-active { background: var(--ws-ink); color: var(--ws-night); }
 .ws .modeswitch__tab:focus-visible { outline-color: var(--ws-run); }
 
-/* ---------- 案面舞台（画布本体在「夜案」模块落） ---------- */
+/* ---------- 案面舞台 ---------- */
 /* 列位必须写死：grid-row 显式声明的对话栏会抢自动落位，把舞台挤到右列 */
 .ws__stage {
   grid-column: 1;
@@ -113,13 +113,211 @@
   overflow: auto;
   min-height: 0;
 }
-.wsc { min-height: 100%; }
-.wsc__build {
-  padding: 60px 34px;
+
+/* ============================================================
+   夜案画布（C2）：案心一盏灵，五手一章环坐。
+   明暗即状态 —— 亮=在写（花青光）· 常=已成 · 暗=待命 · 沉=折笔。
+   ============================================================ */
+.wsc {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+/* 案底 watermark：一个「灵」沉在纸下，永不参与可读层 */
+.wsc__watermark {
+  position: absolute;
+  right: 6px;
+  bottom: -78px;
+  z-index: 0;
   font-family: var(--f-display);
-  font-size: 15px;
-  letter-spacing: 0.2em;
+  font-size: 330px;
+  line-height: 1;
+  color: rgba(237, 230, 212, 0.03);
+  pointer-events: none;
+  user-select: none;
+}
+
+.wsc__caption {
+  flex: none;
+  position: relative;
+  z-index: 1;
+  padding: 24px 34px 0;
+  font-family: var(--f-display);
+  font-size: 14px;
+  letter-spacing: 0.22em;
   color: var(--ws-ink-3);
+}
+
+/* ---------- 环坐网格：上/左/心/右/下 ---------- */
+.wsc__map {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-height: 440px;
+  display: grid;
+  grid-template-columns: 1fr 1.35fr 1fr;
+  grid-template-rows: 1fr 1.2fr 1fr;
+  align-items: center;
+  justify-items: center;
+  gap: 20px;
+  padding: 30px 8% 14px;
+}
+.wsc__orbit { display: flex; align-items: center; justify-content: center; gap: 22px; }
+.wsc__orbit--top { grid-column: 1 / 4; grid-row: 1; }
+.wsc__orbit--left { grid-column: 1; grid-row: 2; flex-direction: column; }
+.wsc__orbit--right { grid-column: 3; grid-row: 2; flex-direction: column; }
+.wsc__orbit--bottom { grid-column: 1 / 4; grid-row: 3; }
+
+/* 案面引线：从四边探向案心，接灯不接线（近似即可，别较真贝塞尔） */
+.wsc__lines { position: absolute; inset: 30px 8% 14px; pointer-events: none; }
+.wsc__line { position: absolute; background: var(--ws-line); }
+.wsc__line--top, .wsc__line--bottom { left: 50%; width: 1px; height: 31%; }
+.wsc__line--top { top: 0; }
+.wsc__line--bottom { bottom: 0; }
+.wsc__line--left, .wsc__line--right { top: 50%; height: 1px; width: 26%; }
+.wsc__line--left { left: 0; }
+.wsc__line--right { right: 0; }
+
+/* ---------- 一盏灯 ---------- */
+.wsc__lamp {
+  width: 150px;
+  padding: 15px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  background: var(--ws-face);
+  border: 1px solid var(--ws-line);
+  border-radius: var(--radius-fine);
+  color: var(--ws-ink-3);
+  cursor: pointer;
+  transition: opacity 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+.wsc__lamp-mark { font-family: var(--f-display); font-size: 30px; line-height: 1.25; color: var(--ws-ink); }
+.wsc__lamp-name { font-size: 13px; letter-spacing: 0.16em; color: inherit; }
+.wsc__lamp-state { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: inherit; }
+.wsc__lamp-state i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+/* 四档脸色 */
+.wsc__lamp.is-done { color: var(--ws-ink-2); }
+.wsc__lamp.is-running {
+  color: var(--ws-run);
+  border-color: rgba(127, 163, 188, 0.55);
+  box-shadow: 0 0 28px rgba(127, 163, 188, 0.15);
+}
+.wsc__lamp.is-running .wsc__lamp-mark { color: var(--ws-run); }
+.wsc__lamp.is-running .wsc__lamp-state i { animation: ws-breath 1.8s ease-in-out infinite; }
+.wsc__lamp.is-idle { opacity: 0.34; }
+.wsc__lamp.is-idle .wsc__lamp-mark { color: var(--ws-ink-2); }
+.wsc__lamp.is-failed { color: var(--ws-fail); border-color: rgba(196, 87, 74, 0.5); }
+.wsc__lamp.is-failed .wsc__lamp-mark { color: var(--ws-fail); }
+
+.wsc__lamp:hover, .wsc__lamp:focus-visible { opacity: 1; background: #262219; }
+.wsc__lamp:focus-visible { outline: 1px solid var(--ws-run); outline-offset: 2px; }
+
+/* ---------- 案心：灵 ---------- */
+.wsc__hub {
+  grid-column: 2;
+  grid-row: 2;
+  z-index: 2;
+  width: 184px;
+  height: 184px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--ws-face);
+  border: 1px solid rgba(181, 56, 44, 0.85);
+  border-radius: var(--radius-fine);
+  cursor: pointer;
+  box-shadow: 0 0 40px rgba(181, 56, 44, 0.1);
+}
+.wsc__hub:focus-visible { outline: 1px solid var(--ws-run); outline-offset: 2px; }
+.wsc__hub-seal {
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  border: 1px solid var(--m-cinnabar);
+  color: var(--m-cinnabar);
+  font-family: var(--f-display);
+  font-size: 30px;
+}
+.wsc__hub-name { font-family: var(--f-display); font-size: 18px; letter-spacing: 0.18em; color: var(--ws-ink); }
+.wsc__hub-state { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ws-run); }
+.wsc__hub-state i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: ws-breath 1.8s ease-in-out infinite; }
+
+@keyframes ws-breath { 50% { opacity: 0.28; } }
+
+/* ---------- 浮签：悬灯见近况 ---------- */
+.wsc__bubble {
+  position: absolute;
+  z-index: 6;
+  width: 300px;
+  padding: 14px 16px 16px;
+  background: var(--ws-face);
+  border: 1px solid var(--ws-line);
+  border-left-width: 3px;
+  border-radius: var(--radius-card);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.5);
+  color: var(--ws-ink-2);
+  font-size: 12.5px;
+  pointer-events: none;
+  /* 只淡入不动 transform：上方翻转的浮签靠 inline transform 定位，动画别抢 */
+  animation: ws-pop 0.14s ease-out both;
+}
+@keyframes ws-pop { from { opacity: 0; } }
+.wsc__bubble.is-running { border-left-color: var(--ws-run); }
+.wsc__bubble.is-done { border-left-color: rgba(237, 230, 212, 0.5); }
+.wsc__bubble.is-idle { border-left-color: var(--ws-ink-3); }
+.wsc__bubble.is-failed { border-left-color: var(--ws-fail); }
+
+.wsc__bubble-head { display: flex; align-items: baseline; gap: 9px; padding-bottom: 10px; border-bottom: 1px solid var(--ws-line); }
+.wsc__bubble-mark { font-family: var(--f-display); font-size: 20px; color: var(--ws-ink); }
+.wsc__bubble-name { font-family: var(--f-display); font-size: 15px; font-weight: 400; letter-spacing: 0.14em; color: var(--ws-ink); }
+.wsc__bubble-state { margin-left: auto; font-size: 11px; color: inherit; }
+.wsc__bubble.is-running .wsc__bubble-state { color: var(--ws-run); }
+
+.wsc__bubble-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin-top: 10px; line-height: 1.7; }
+.wsc__bubble-row > span { flex: none; width: 58px; color: var(--ws-ink-3); letter-spacing: 0.14em; }
+.wsc__bubble-num { font-style: normal; color: var(--ws-ink); }
+.wsc__bubble-num s { text-decoration: none; color: var(--ws-ink-3); }
+.wsc__bubble-track { flex: none; width: 100%; height: 3px; background: rgba(237, 230, 212, 0.12); }
+.wsc__bubble-track b { display: block; height: 100%; background: var(--ws-run); }
+.wsc__bubble.is-done .wsc__bubble-track b { background: rgba(237, 230, 212, 0.5); }
+.wsc__bubble.is-idle .wsc__bubble-track b { background: var(--ws-ink-3); }
+.wsc__bubble.is-failed .wsc__bubble-track b { background: var(--ws-fail); }
+
+/* ---------- 图例：四种脸色对号 ---------- */
+.wsc__legend {
+  flex: none;
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 26px;
+  padding: 13px 34px 17px;
+  border-top: 1px solid var(--ws-line);
+  color: var(--ws-ink-3);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+}
+.wsc__legend__item { display: inline-flex; align-items: center; gap: 7px; }
+.wsc__legend__item i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.wsc__legend__item.is-running i { background: var(--ws-run); }
+.wsc__legend__item.is-done i { background: var(--ws-ink); }
+.wsc__legend__item.is-idle i { background: rgba(237, 230, 212, 0.22); }
+.wsc__legend__item.is-failed i { background: var(--ws-fail); }
+
+@media (max-width: 1240px) {
+  .wsc__map { padding-inline: 4%; gap: 14px; }
+  .wsc__lines { inset: 30px 4% 14px; }
+  .wsc__lamp { width: 126px; }
+  .wsc__hub { width: 158px; height: 158px; }
 }
 
 /* ---------- 对话栏：案右摊开的一页旧宣 ---------- */
