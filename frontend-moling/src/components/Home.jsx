@@ -2,8 +2,8 @@ import { Link } from 'react-router-dom';
 import Seal from './Seal.jsx';
 
 /**
- * 首页 = 主题展示空壳：报头 + 色板（试色）+ 字体样例 + 页脚。
- * 不接任何接口，不放业务内容；后续业务页在此主题上长出来。
+ * 题签页 = 主题展示：报头（远山 + 落印 + 开卷出口）+ 字体样例 + 页脚。
+ * 不接任何接口，不放业务内容。
  */
 
 function SectionTitle({ mark, name }) {
@@ -30,12 +30,12 @@ export default function Home() {
           <div style={{ marginTop: 18 }}>
             <Seal small chars={['灵']} />
           </div>
-          {/* v0.2 新增的唯一出口：开卷进工作台 */}
+          {/* 唯一出口：开卷进工作台（执笔看链路，顶栏纸签切文库） */}
           <div className="mast__cta">
-            <Link to="/w/desk" className="btn btn--primary">
+            <Link to="/w" className="btn btn--primary">
               开卷 · 进工作台
             </Link>
-            <span className="anno">书架 / 选题 / 大纲 / 角色 / 剧情 / 文风 / 书稿 / 设定</span>
+            <span className="anno">执笔观 Agent 链路 · 文库查书之诸页</span>
           </div>
         </div>
       </header>

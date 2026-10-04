@@ -140,39 +140,6 @@ body::before {
 
 .sec-title .rule { flex: 1; height: 1px; background: var(--m-line); }
 
-/* ---------- 色签 · 试色 ---------- */
-.swatches { display: flex; flex-wrap: wrap; gap: 26px; }
-
-.swatch { width: 52px; }
-
-.swatch__chip {
-  display: block;
-  height: 190px;
-  border-radius: var(--radius-fine);
-  box-shadow: inset 0 0 0 1px rgba(33, 30, 24, 0.08);
-  /* 上缘淡出，如墨在纸上洇开 */
-  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 16px);
-  mask-image: linear-gradient(180deg, transparent 0, #000 16px);
-}
-
-.swatch__name {
-  margin-top: 12px;
-  height: 68px;
-  writing-mode: vertical-rl;
-  font-family: var(--f-display);
-  font-size: 15px;
-  letter-spacing: 0.32em;
-  color: var(--m-ink);
-}
-
-.swatch__hex {
-  margin-top: 4px;
-  font-size: 10.5px;
-  letter-spacing: 0.04em;
-  color: var(--m-ink-3);
-  white-space: nowrap;
-}
-
 /* ---------- 字体样例 ---------- */
 .types {
   display: grid;
