@@ -321,6 +321,8 @@
 }
 
 /* ---------- 对话栏：案右摊开的一页旧宣 ---------- */
+/* 纸色分层：题头与状态条一张亮宣，消息区落在旧宣案上，
+   请示签与输入区再铺亮宣 —— 同是纸，也有浓淡。 */
 .ws__chat {
   grid-column: 2;
   grid-row: 2;
@@ -329,6 +331,30 @@
   min-height: 0;
   background: var(--m-paper-2);
   border-left: 1px solid var(--m-line);
+}
+.ws__chat .conversation__head { background: var(--m-paper); }
+.ws__chat .conversation__context { background: var(--m-paper); }
+.ws__chat .conversation__composer {
+  background: var(--m-paper);
+  flex-direction: row;
+  align-items: flex-end;
+  gap: 10px;
+}
+.ws__chat .conversation__composer textarea { flex: 1; min-height: 40px; }
+.ws__chat .conversation__composer .btn { flex: none; justify-content: center; margin: 0; }
+.ws__chat .conversation__composer textarea:focus-visible { outline: 1px solid var(--m-indigo); outline-offset: -1px; }
+
+/* 栏内自己的「灵」印（v0.4 的 chat-rail 遗名作废，归 conversation 词汇表） */
+.conversation__seal {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-fine);
+  background: var(--m-cinnabar);
+  color: var(--m-paper);
+  font-family: var(--f-display);
+  font-size: 18px;
 }
 .ws__chat.is-collapsed { padding: 0; }
 .ws__chat.is-collapsed .conversation__head {

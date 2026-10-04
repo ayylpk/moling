@@ -15,7 +15,7 @@ export default function Conversation({ collapsed, onToggle }) {
           <div>
             <span className="conversation__eyebrow">协作频道</span>
             <h2>
-              <span className="chat-rail__seal">灵</span>中心 Agent
+              <span className="conversation__seal">灵</span>中心 Agent
             </h2>
           </div>
         )}
