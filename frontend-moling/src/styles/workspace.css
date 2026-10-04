@@ -378,7 +378,10 @@
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: 54px minmax(0, 1fr) auto;
   }
-  .ws__chat { grid-row: 3; border-left: 0; border-top: 1px solid var(--m-line); max-height: 46vh; }
+  /* 单列后必须把写死的 grid-column 一并收回 1：
+     否则对话栏留在隐式第 2 列，按 max-content 抢宽、舞台被挤扁（900px 实拍踩出） */
+  .ws__stage { grid-column: 1; }
+  .ws__chat { grid-column: 1; grid-row: 3; border-left: 0; border-top: 1px solid var(--m-line); max-height: 46vh; }
   .ws__chat.is-collapsed { max-height: none; }
   .ws__chat.is-collapsed .conversation__head { flex: none; }
   .ws__bar-book { display: none; }

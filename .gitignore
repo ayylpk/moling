@@ -36,3 +36,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # local database (schema is created at runtime by createDB.ts)
 resources/*.sqlite
 resources/*.sqlite-journal
+
+# frontend verification screenshots (local evidence, not for repo)
+frontend-moling/.shots/
