@@ -22,6 +22,7 @@ import { listCharacters } from "../my-app/src/service/characterService"
 import { listLocations } from "../my-app/src/service/locationService"
 import { listVolumeOutlines } from "../my-app/src/service/outlineService"
 import { listChapters, listPendingDemands } from "../my-app/src/service/chapterService"
+import { listTasks } from "../my-app/src/service/taskService"
 
 /* ==================== 阶段 ==================== */
 
@@ -127,13 +128,20 @@ export interface DerivedNovelState {
   draftedChapterIdxs: number[]
   finalizedChapterIdxs: number[]
   pendingDemands: string[]
+  /**
+   * 已完成的任务键（`stage:target_key`）。
+   *
+   * 它是 `generation_tasks` 的**投影**，不是一份独立状态——
+   * 从库里现推，所以永远准。有了它，中心 agent 在 claim 之前
+   * 就能看出哪几步已经跑完，不必逐个去领。
+   */
+  completedTaskKeys: string[]
 }
 
-/** 进 graph 的完整状态值：可推导的那部分 + 会话自身的标识 + 本地进度。 */
+/** 进 graph 的完整状态值：可推导的那部分 + 会话自身的标识。 */
 export interface NovelStateValue extends DerivedNovelState {
   novelId: number | null
   slug: string | null
-  completedTaskKeys: string[]
 }
 
 /**
@@ -194,7 +202,11 @@ export function deriveNovelState(novelId: number): DerivedNovelState {
     draftedChapterIdxs: drafted,
     finalizedChapterIdxs: finalized,
     pendingDemands: demands.map((d) => (typeof d === "string" ? d : JSON.stringify(d))),
-  } satisfies DerivedNovelState & { _chapters?: number }
+    // 已完成的任务键：从任务表现推（它是库的投影，不是独立状态）
+    completedTaskKeys: listTasks(novelId)
+      .filter((t) => t.status === "done")
+      .map((t) => `${t.stage}:${t.target_key}`),
+  }
 }
 
 /* ==================== 状态同步中间件 ==================== */

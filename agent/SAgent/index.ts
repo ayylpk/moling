@@ -32,4 +32,4 @@ export {
   type NovelStateValue,
 } from "./state"
 
-export { subAgentTools, databaseTools } from "./tools"
+export { subAgentTools, databaseTools, taskTools } from "./tools"
