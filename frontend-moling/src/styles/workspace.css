@@ -7,10 +7,11 @@
    色值就近在 .ws 上开变量，不动 tokens.css 的全站色板。
    ============================================================ */
 .ws {
-  --ws-night: #191712;                  /* 案面 = 玄墨 */
-  --ws-bar: #14120d;                    /* 案沿：比案面再沉一档 */
-  --ws-face: #211e18;                   /* 灯罩面 = 浓墨 */
-  --ws-line: rgba(237, 230, 212, 0.14); /* 案上界行：旧宣反描 */
+  /* 10/4 用户反馈"太暗"：夜案整体提亮一档——仍是深夜，但案面能看见木纹 */
+  --ws-night: #26221a;                  /* 案面 = 玄墨提亮 */
+  --ws-bar: #1d1a13;                    /* 案沿：比案面再沉一档 */
+  --ws-face: #322c21;                   /* 灯罩面：比案面亮半档，三层要分得开 */
+  --ws-line: rgba(237, 230, 212, 0.18); /* 案上界行：旧宣反描（亮案提浓度） */
   --ws-ink: #ede6d4;                    /* 案上反白正文（亮旧宣） */
   --ws-ink-2: rgba(237, 230, 212, 0.66);
   --ws-ink-3: rgba(237, 230, 212, 0.38);
@@ -135,7 +136,7 @@
   font-family: var(--f-display);
   font-size: 330px;
   line-height: 1;
-  color: rgba(237, 230, 212, 0.03);
+  color: rgba(237, 230, 212, 0.045);
   pointer-events: none;
   user-select: none;
 }
@@ -215,7 +216,7 @@
 .wsc__lamp.is-failed { color: var(--ws-fail); border-color: rgba(196, 87, 74, 0.5); }
 .wsc__lamp.is-failed .wsc__lamp-mark { color: var(--ws-fail); }
 
-.wsc__lamp:hover, .wsc__lamp:focus-visible { opacity: 1; background: #262219; }
+.wsc__lamp:hover, .wsc__lamp:focus-visible { opacity: 1; background: #3d3628; }
 .wsc__lamp:focus-visible { outline: 1px solid var(--ws-run); outline-offset: 2px; }
 
 /* ---------- 案心：灵 ---------- */
@@ -319,6 +320,69 @@
   .wsc__lamp { width: 126px; }
   .wsc__hub { width: 158px; height: 158px; }
 }
+
+/* ---------- 对话栏基础层 ----------
+   原寄生于 v0.4 workbench.css 的 .wb__conversation 固定浮层，C4 重写时误当死层删除，
+   执笔壳只剩背景覆盖、整栏裸奔（10/4 用户指出，现按 .ws__chat 列式布局重建）。
+   一处改意：用户消息侧标原为正朱，违红线 3（朱砂只印章/激活/主操作），改浓墨实线——案主之言，墨最重。 */
+.conversation__head {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  min-height: 92px; padding: 25px 20px 18px;
+  border-bottom: 1px solid var(--m-line);
+}
+.conversation__eyebrow { display: block; color: var(--m-ink-3); font-size: 12px; letter-spacing: 0.12em; }
+.conversation__head h2 {
+  display: flex; align-items: center; gap: 10px; margin-top: 6px;
+  font-family: var(--f-display); font-size: 22px; font-weight: 400; color: var(--m-ink);
+}
+.conversation__collapse {
+  border: 1px solid var(--m-line); border-radius: var(--radius-fine);
+  padding: 7px 10px; background: var(--m-paper); color: var(--m-ink-2);
+  cursor: pointer; font-size: 13px; white-space: nowrap;
+}
+.conversation__collapse:hover { border-color: var(--m-indigo); color: var(--m-indigo); }
+
+.conversation__context {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 17px 20px; border-bottom: 1px solid var(--m-line);
+}
+.conversation__context strong { font-size: 15px; font-weight: 600; color: var(--m-ink); }
+.conversation__context .status { width: fit-content; }
+
+.conversation__messages { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 20px; }
+.conversation__message { margin-bottom: 20px; padding-left: 12px; border-left: 2px solid var(--m-line); }
+.conversation__message.is-agent { border-left-color: var(--m-indigo); }
+.conversation__message.is-user { border-left-color: var(--m-ink); }
+.conversation__message-label { color: var(--m-ink-3); font-size: 12px; }
+.conversation__message p { margin-top: 5px; color: var(--m-ink); font-size: 15px; line-height: 1.75; }
+
+.conversation__ask {
+  margin: 0 20px 15px; padding: 16px;
+  background: var(--m-paper); border: 1px solid var(--m-line); border-radius: var(--radius-card);
+}
+.conversation__ask-head { display: flex; justify-content: space-between; align-items: center; }
+.conversation__ask h3 { margin-top: 12px; font-family: var(--f-display); font-size: 18px; font-weight: 400; color: var(--m-ink); }
+.conversation__ask p { margin-top: 6px; color: var(--m-ink-2); font-size: 13px; }
+.conversation__choices { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 13px; }
+.conversation__choices button {
+  min-height: 40px; padding: 0 10px;
+  border: 1px solid var(--m-line); border-radius: var(--radius-fine);
+  background: var(--m-paper); color: var(--m-ink);
+  cursor: pointer; font-size: 14px; font-family: var(--f-ui);
+}
+.conversation__choices button:hover { border-color: var(--m-indigo); }
+.conversation__choices button:focus-visible { outline: 1px solid var(--m-indigo); outline-offset: 1px; }
+
+.conversation__composer {
+  display: flex; flex-direction: column; gap: 9px;
+  padding: 15px 20px 20px; border-top: 1px solid var(--m-line);
+}
+.conversation__composer textarea {
+  min-height: 66px; resize: vertical; padding: 10px;
+  border: 1px solid var(--m-line); border-radius: var(--radius-fine);
+  background: var(--m-paper); color: var(--m-ink); font: 14px/1.6 var(--f-ui);
+}
+.conversation__composer .btn { justify-content: center; min-height: 40px; font-size: 14px; }
 
 /* ---------- 对话栏：案右摊开的一页旧宣 ---------- */
 /* 纸色分层：题头与状态条一张亮宣，消息区落在旧宣案上，
