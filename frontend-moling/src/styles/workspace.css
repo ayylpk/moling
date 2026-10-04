@@ -1,0 +1,161 @@
+/* ============================================================
+   墨灵 · 执笔工作区（夜案）v0.5
+   取意「夜里书案」：玄墨是案面，诸 Agent 是案上的灯——
+   亮=在写，常=已成，暗=待命，沉=折笔（明暗即状态）。
+   对话栏保持宣纸色：案再黑，纸还是纸。
+   红线仍守：实底不见玻璃、圆角 ≤4px、朱砂只归印章与主操作。
+   色值就近在 .ws 上开变量，不动 tokens.css 的全站色板。
+   ============================================================ */
+.ws {
+  --ws-night: #191712;                  /* 案面 = 玄墨 */
+  --ws-bar: #14120d;                    /* 案沿：比案面再沉一档 */
+  --ws-face: #211e18;                   /* 灯罩面 = 浓墨 */
+  --ws-line: rgba(237, 230, 212, 0.14); /* 案上界行：旧宣反描 */
+  --ws-ink: #ede6d4;                    /* 案上反白正文（亮旧宣） */
+  --ws-ink-2: rgba(237, 230, 212, 0.66);
+  --ws-ink-3: rgba(237, 230, 212, 0.38);
+  --ws-run: #7fa3bc;                    /* 花青提亮 —— 在写 */
+  --ws-stale: #b08d5e;                  /* 赭石提亮 —— 提醒 */
+  --ws-fail: #c4574a;                   /* 深朱提亮 —— 折笔（只点状态，不铺面） */
+
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  grid-template-rows: 54px minmax(0, 1fr);
+  height: 100vh;
+  background: var(--ws-night);
+}
+.ws--chat-collapsed { grid-template-columns: minmax(0, 1fr) 48px; }
+
+/* ---------- 案沿顶栏：品牌印 · 模式纸签 · 书名 · 保存态 ---------- */
+.ws__bar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 20px;
+  background: var(--ws-bar);
+  border-bottom: 1px solid var(--ws-line);
+}
+
+.ws__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+}
+.ws__brand-seal {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--m-cinnabar);
+  border-radius: var(--radius-fine);
+  color: var(--m-cinnabar);
+  font-family: var(--f-display);
+  font-size: 16px;
+}
+.ws__brand-name {
+  font-family: var(--f-display);
+  font-size: 17px;
+  letter-spacing: 0.24em;
+  color: var(--ws-ink);
+}
+.ws__bar-book {
+  font-family: var(--f-manuscript);
+  font-size: 14px;
+  color: var(--ws-ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ws__bar__spacer { flex: 1; }
+.ws__bar .save-state { color: var(--ws-ink-3); }
+
+/* ---------- 模式纸签「执笔 / 文库」：当前档 = 翻面实底反白 ---------- */
+/* 默认按纸面（文库顶栏）配色；暗案面下的覆写在 .ws 作用域 */
+.modeswitch {
+  display: inline-flex;
+  flex: none;
+  border: 1px solid var(--m-line);
+  border-radius: var(--radius-fine);
+  background: var(--m-paper);
+}
+.modeswitch__tab {
+  padding: 5px 16px;
+  font-family: var(--f-display);
+  font-size: 15px;
+  letter-spacing: 0.22em;
+  text-decoration: none;
+  color: var(--m-ink-3);
+  white-space: nowrap;
+}
+.modeswitch__tab + .modeswitch__tab { border-left: 1px solid var(--m-line); }
+.modeswitch__tab:hover { color: var(--m-ink); }
+.modeswitch__tab.is-active {
+  background: var(--m-ink);
+  color: var(--m-paper);
+}
+.modeswitch__tab:focus-visible { outline: 1px solid var(--m-indigo); outline-offset: 1px; }
+
+.ws .modeswitch { border-color: var(--ws-line); background: transparent; }
+.ws .modeswitch__tab + .modeswitch__tab { border-left-color: var(--ws-line); }
+.ws .modeswitch__tab { color: var(--ws-ink-3); }
+.ws .modeswitch__tab:hover { color: var(--ws-ink); }
+.ws .modeswitch__tab.is-active { background: var(--ws-ink); color: var(--ws-night); }
+.ws .modeswitch__tab:focus-visible { outline-color: var(--ws-run); }
+
+/* ---------- 案面舞台（画布本体在「夜案」模块落） ---------- */
+/* 列位必须写死：grid-row 显式声明的对话栏会抢自动落位，把舞台挤到右列 */
+.ws__stage {
+  grid-column: 1;
+  grid-row: 2;
+  position: relative;
+  overflow: auto;
+  min-height: 0;
+}
+.wsc { min-height: 100%; }
+.wsc__build {
+  padding: 60px 34px;
+  font-family: var(--f-display);
+  font-size: 15px;
+  letter-spacing: 0.2em;
+  color: var(--ws-ink-3);
+}
+
+/* ---------- 对话栏：案右摊开的一页旧宣 ---------- */
+.ws__chat {
+  grid-column: 2;
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--m-paper-2);
+  border-left: 1px solid var(--m-line);
+}
+.ws__chat.is-collapsed { padding: 0; }
+.ws__chat.is-collapsed .conversation__head {
+  flex: 1;
+  align-items: flex-start;
+  justify-content: center;
+  min-height: 0;
+  padding: 22px 8px;
+  border-bottom: 0;
+}
+.ws__chat.is-collapsed .conversation__collapse {
+  writing-mode: vertical-rl;
+  letter-spacing: 0.3em;
+  padding: 14px 7px;
+}
+
+/* ---------- 窄屏：对话栏沉到案下，画布占全幅 ---------- */
+@media (max-width: 980px) {
+  .ws,
+  .ws--chat-collapsed {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 54px minmax(0, 1fr) auto;
+  }
+  .ws__chat { grid-row: 3; border-left: 0; border-top: 1px solid var(--m-line); max-height: 46vh; }
+  .ws__chat.is-collapsed { max-height: none; }
+  .ws__chat.is-collapsed .conversation__head { flex: none; }
+  .ws__bar-book { display: none; }
+}

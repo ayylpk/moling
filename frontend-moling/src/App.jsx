@@ -3,6 +3,7 @@ import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Splash from './components/Splash.jsx';
 import Home from './components/Home.jsx';
 import WorkbenchLayout from './layout/WorkbenchLayout.jsx';
+import Workspace from './pages/Workspace.jsx';
 import Desk from './pages/Desk.jsx';
 import Topic from './pages/Topic.jsx';
 import Outline from './pages/Outline.jsx';
@@ -11,7 +12,6 @@ import Plot from './pages/Plot.jsx';
 import Style from './pages/Style.jsx';
 import Manuscript from './pages/Manuscript.jsx';
 import World from './pages/World.jsx';
-import Collaboration from './pages/Collaboration.jsx';
 
 // 系统开关「减少动态效果」：直接跳过启动页进首页
 const reducedMotion = window
@@ -26,8 +26,11 @@ const reducedMotion = window
  *
  * 路由用 HashRouter：将来整站大概率是静态托管（同 hinaverse 的教训），
  * hash 路由免服务器 rewrite，`vite preview` 下刷新也不 404。
- * 题签页 `/` = 主题展示（v0.1 首页原样保留）；
- * 工作台八入口全部挂在 /w 下面，共用 WorkbenchLayout（侧栏+顶栏）。
+ *
+ * 双界面（10/4 重塑，取代原「侧栏九宫格」）：
+ *   /w      执笔 —— Agent 链路画布 + 对话栏（WorkbenchLayout 分发的暗色壳）
+ *   /w/*    文库 —— 侧栏导航 + 资料页（书架/选题/世界观/大纲/角色/剧情/文风/书稿）
+ * 两壳共用 WorkbenchContext（当前小说、偏好、保存态），顶栏「执笔/文库」纸签互切。
  */
 export default function App() {
   const [stage, setStage] = useState(reducedMotion ? 'home' : 'splash');
@@ -52,8 +55,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/w" element={<WorkbenchLayout />}>
-              <Route index element={<Navigate to="collaboration" replace />} />
-              <Route path="collaboration" element={<Collaboration />} />
+              <Route index element={<Workspace />} />
               <Route path="desk" element={<Desk />} />
               <Route path="topic" element={<Topic />} />
               <Route path="outline" element={<Outline />} />
