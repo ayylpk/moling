@@ -20,4 +20,14 @@ export { SAGENT_PROMPT, buildSAgentPrompt, type SAgentPromptInput } from "./prom
 
 export { COMPACT_PROMPT } from "./compact"
 
+export {
+  NovelState,
+  INITIAL_NOVEL_STATE,
+  PHASE_ORDER,
+  deriveNovelState,
+  novelStateSync,
+  type Phase,
+  type DerivedNovelState,
+} from "./state"
+
 export { subAgentTools, databaseTools } from "./tools"

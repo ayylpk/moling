@@ -23,7 +23,6 @@
  */
 import path from "node:path"
 import { Database } from "bun:sqlite"
-import { Annotation, MessagesAnnotation } from "@langchain/langgraph"
 import {
   BaseCheckpointSaver,
   copyCheckpoint,
@@ -39,7 +38,7 @@ import {
 } from "@langchain/langgraph-checkpoint"
 import type { RunnableConfig } from "@langchain/core/runnables"
 
-import { createSAgent } from "./SAgent"
+import { createSAgent, INITIAL_NOVEL_STATE } from "./SAgent"
 
 /* ==================== 路径 ==================== */
 
@@ -340,85 +339,12 @@ export class SqliteCheckpointSaver extends BaseCheckpointSaver {
 /* ==================== ② 状态 ==================== */
 
 /**
- * 小说创作的状态。
- *
- * 按"一本小说从立项到成书，一路上必须记得的东西"来定，一样都不省：
- *   在写哪本 / 走到哪个阶段 / 写到第几卷第几章 /
- *   场上已有哪些实体（世界观版本、角色、地点、卷）/
- *   哪些章有稿、哪些章定稿 / 还欠什么（待办需求）/
- *   本轮会话做了哪些任务（断点续跑）
- *
- * 但**根不在状态里**：实体内容、章纲、正文、任务表都在数据库。
- * 这里放的是指针与快照，作用是让 SAgent 少查一次库、以及让 checkpoint
- * 能回答"这一轮是从什么状态继续的"。
+ * 状态定义本身在 ./SAgent/state.ts —— 它归 SAgent（那是 SAgent 的状态），
+ * 由 SAgent 的 `stateSchema` 声明、由它的 `novelStateSync` 中间件维护。
+ * system.ts 只把组装要用的名字转出去，**不再自己定义一份**：
+ * 两份定义迟早会分叉，而状态分叉是最难查的一类 bug。
  */
-export const NovelState = Annotation.Root({
-  /** 对话历史。SAgent 的记忆就是它，由 checkpointer 负责持久化。 */
-  messages: MessagesAnnotation.spec.messages,
-
-  /* ---- 这条路在写哪本书 ---- */
-  novelId: Annotation<number | null>,
-  slug: Annotation<string | null>,
-
-  /* ---- 走到哪了 ---- */
-  /** 当前阶段：立项 / 世界观 / 角色 / 地点 / 大纲 / 正文 / 润色 / 完稿 */
-  phase: Annotation<Phase>,
-  currentVolumeNo: Annotation<number>,
-  currentChapterIdx: Annotation<number>,
-
-  /* ---- 场上已有什么（快照，真身在库里）---- */
-  worldId: Annotation<number | null>,
-  worldVersion: Annotation<number | null>,
-  characterIds: Annotation<number[]>,
-  locationIds: Annotation<number[]>,
-  volumeIds: Annotation<number[]>,
-
-  /* ---- 章的进度 ---- */
-  /** 已有初稿的章号 */
-  draftedChapterIdxs: Annotation<number[]>,
-  /** 已定稿（润色完）的章号 */
-  finalizedChapterIdxs: Annotation<number[]>,
-
-  /* ---- 还欠什么 ---- */
-  /** 章纲里声明了 `NEW:xxx` 但还不存在的角色/地点。非空时应该先去补。 */
-  pendingDemands: Annotation<string[]>,
-
-  /* ---- 断点续跑 ---- */
-  /** 本轮会话已完成的任务键（stage:target_key） */
-  completedTaskKeys: Annotation<string[]>,
-})
-
-/**
- * 创作阶段。
- *
- * 它是个**顺序链**，不是标记位——顺序由 SAgent 的 skill 约束，
- * 这里只记录"现在站在哪一节"。
- */
-export type Phase =
-  | "init" // 还没立项
-  | "world" // 世界观
-  | "cast" // 角色与地点
-  | "outline" // 卷大纲
-  | "prose" // 正文
-  | "polish" // 润色
-  | "done" // 完稿
-
-export const INITIAL_NOVEL_STATE = {
-  novelId: null,
-  slug: null,
-  phase: "init" as Phase,
-  currentVolumeNo: 1,
-  currentChapterIdx: 1,
-  worldId: null,
-  worldVersion: null,
-  characterIds: [],
-  locationIds: [],
-  volumeIds: [],
-  draftedChapterIdxs: [],
-  finalizedChapterIdxs: [],
-  pendingDemands: [],
-  completedTaskKeys: [],
-}
+export { NovelState, INITIAL_NOVEL_STATE, type Phase } from "./SAgent"
 
 /* ==================== ③ 组装 ==================== */
 
@@ -448,8 +374,20 @@ export function createNovelSystem(options: NovelSystemOptions) {
     config: {
       configurable: { thread_id: threadId, novelId: options.novelId },
     },
-    /** 装进 messages 的初始状态（没有历史时才用） */
-    initialState: { ...INITIAL_NOVEL_STATE, novelId: options.novelId, slug: options.slug },
+    /**
+     * 每轮 invoke 要一起带上的**状态种子**。
+     *
+     * `novelId` 是 SAgent 的 `novelStateSync` 中间件推导状态的入口——
+     * 不带它，状态就永远停在 `INITIAL_NOVEL_STATE`（中间件拿不到 id 会直接跳过，
+     * 这是有意的：宁可状态不动，也不要猜一个 id 去查错库）。
+     *
+     * 用法：`agent.invoke({ ...system.seed, messages: [...] }, system.config)`
+     */
+    seed: {
+      ...INITIAL_NOVEL_STATE,
+      novelId: options.novelId,
+      slug: options.slug,
+    },
     close: () => saver.close(),
   }
 }

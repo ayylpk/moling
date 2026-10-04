@@ -36,6 +36,7 @@ import { RemoveMessage, ToolMessage, type BaseMessage } from "@langchain/core/me
 import { createModel } from "../create_model"
 import { SAGENT_PROMPT } from "./prompt"
 import { COMPACT_PROMPT } from "./compact"
+import { NovelState, novelStateSync } from "./state"
 import { subAgentTools, databaseTools } from "./tools"
 
 /* ==================== 可配常量 ==================== */
@@ -189,7 +190,13 @@ export function createSAgent(model: BaseChatModel = createModel(0.3)) {
     model,
     systemPrompt: SAGENT_PROMPT,
     tools: [...subAgentTools, ...databaseTools],
+    // 状态：小说创作该有的东西（阶段 / 进度 / 场上实体 / 待办 / 任务）
+    // 它是**缓存**——真身在数据库，每次调模型前由 novelStateSync 重新推导，见 ./state.ts
+    stateSchema: NovelState,
     middleware: [
+      // ① 状态同步：把状态刷成库里的实际情况
+      //    放在最前面——后面两个中间件要按真实进度做判断
+      novelStateSync(),
       // ② 章级：超长的工具结果降级成摘要
       chapterArtifactCompaction(),
       // ③ 窗口级：到 80% 全量压缩，用自定义的两段式提示词

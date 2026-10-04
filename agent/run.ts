@@ -107,6 +107,8 @@ const system = createNovelSystem({ novelId: novel.id, slug: novel.slug })
 try {
   const result = await system.agent.invoke(
     {
+      // 状态种子：novelId 是 SAgent 推导状态的入口，必须一起带（见 system.ts 的 seed 注释）
+      ...system.seed,
       messages: [
         {
           role: "user",
