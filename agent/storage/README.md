@@ -9,6 +9,7 @@
 - `L3` 保存角色动态画像的当前版本和历史版本，和 `characters` 固定角色表互补，不覆盖固定设定。
 - `memory_items` 是统一索引表，保存上述三层以及世界观、剧情、章节资料。
 - `memory_items_fts` 提供 SQLite FTS5 关键词召回。
+- 混合召回使用标准 RRF（Reciprocal Rank Fusion）合并关键词与向量排名，避免直接比较两种不同量纲的分数。
 - `embedding` 以 JSON 数组保存，已支持余弦相似度召回；配置 `SILICONFLOW_API_KEY` 后自动调用硅基流动生成向量，调用失败时自动使用 FTS。
 - 每条记忆保留 `sourceType`、`sourceId`、`volumeId`、`chapterId`，便于 Agent 回溯证据。
 - 中心 Agent 通过 `search_novel_memory` 检索，通过 `remember_novel_memory` 保存确认后的世界观、角色、剧情和章节事实。

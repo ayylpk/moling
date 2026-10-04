@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { Database } from 'bun:sqlite'
 import { initializeNovelSchema } from './novelDatabase'
-import { createMemoryStore, type MemoryRecord } from './memoryStore'
+import { createMemoryStore, rrfMerge, type MemoryRecord } from './memoryStore'
 
 const createStore = () => {
   const database = new Database(':memory:')
@@ -10,6 +10,15 @@ const createStore = () => {
 }
 
 describe('novel memory store', () => {
+  test('merges independent recall lists with reciprocal rank fusion', () => {
+    const keyword = [{ id: 'keyword-first' }, { id: 'shared' }]
+    const vector = [{ id: 'shared' }, { id: 'vector-second' }]
+    const results = rrfMerge([keyword, vector], (item) => item.id)
+
+    expect(results[0]?.id).toBe('shared')
+    expect(results[0]?.rrfScore).toBeGreaterThan(results[1]?.rrfScore ?? 0)
+  })
+
   test('stores a memory and finds it by full-text query', () => {
     const { database, store } = createStore()
     store.upsert({

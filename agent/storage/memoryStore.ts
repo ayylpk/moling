@@ -16,6 +16,21 @@ export type MemoryRecord = {
 }
 export type MemorySearchOptions = { novelId: string; query: string; layer?: MemoryLayer; volumeId?: number; chapterId?: number; embedding?: number[]; limit?: number }
 export type MemorySearchResult = MemoryRecord & { id: number; match: 'keyword' | 'vector' | 'hybrid'; score: number }
+export const RRF_K = 60
+
+export const rrfMerge = <T>(lists: T[][], getId: (item: T) => string, k = RRF_K): Array<T & { rrfScore: number }> => {
+  const merged = new Map<string, { item: T; rrfScore: number }>()
+  for (const list of lists) {
+    list.forEach((item, index) => {
+      const score = 1 / (k + index + 1)
+      const id = getId(item)
+      const existing = merged.get(id)
+      if (existing) existing.rrfScore += score
+      else merged.set(id, { item, rrfScore: score })
+    })
+  }
+  return [...merged.values()].sort((left, right) => right.rrfScore - left.rrfScore).map(({ item, rrfScore }) => ({ ...item, rrfScore }))
+}
 
 const tokenize = (value: string): string[] => {
   const tokens = value.match(/[\p{Script=Han}]|[\p{L}\p{N}_]+/gu) ?? []
@@ -48,18 +63,17 @@ export const createMemoryStore = (database: Database) => ({
     if (options.chapterId !== undefined) { filters.push('m.chapter_id = ?'); params.push(options.chapterId) }
     const where = filters.join(' AND ')
     const keyword = quoteFts(options.query)
-    const keywordRows = keyword ? database.query(`SELECT m.* FROM memory_items_fts f JOIN memory_items m ON m.id = f.rowid WHERE f.memory_items_fts MATCH ? AND ${where} LIMIT ?`).all(keyword, ...params, limit) as Array<Record<string, unknown>> : []
-    const keywordResults = keywordRows.map((row, index) => toResult(row, 'keyword', 1 / (index + 1)))
+    const keywordRows = keyword ? database.query(`SELECT m.* FROM memory_items_fts f JOIN memory_items m ON m.id = f.rowid WHERE f.memory_items_fts MATCH ? AND ${where} LIMIT ?`).all(keyword, ...params, limit * 2) as Array<Record<string, unknown>> : []
+    const keywordResults = keywordRows.map((row) => toResult(row, 'keyword', 0))
     if (!options.embedding) return keywordResults
     const vectorRows = database.query(`SELECT * FROM memory_items m WHERE ${where} AND m.embedding IS NOT NULL`).all(...params) as Array<Record<string, unknown>>
-    const vectorResults = vectorRows.map((row) => toResult(row, 'vector', cosine(options.embedding ?? [], JSON.parse(String(row.embedding)) as number[]))).sort((a, b) => b.score - a.score).slice(0, limit)
-    const merged = new Map<number, MemorySearchResult>()
-    for (const [index, result] of keywordResults.entries()) merged.set(result.id, { ...result, score: result.score * 0.35 })
-    for (const [index, result] of vectorResults.entries()) {
-      const previous = merged.get(result.id)
-      merged.set(result.id, previous ? { ...result, match: 'hybrid', score: previous.score + result.score * 0.65 } : { ...result, score: result.score * 0.65 })
-    }
-    return [...merged.values()].sort((a, b) => b.score - a.score).slice(0, limit)
+    const vectorResults = vectorRows.map((row) => toResult(row, 'vector', cosine(options.embedding ?? [], JSON.parse(String(row.embedding)) as number[]))).sort((a, b) => b.score - a.score).slice(0, limit * 2)
+    const keywordById = new Map(keywordResults.map((result) => [String(result.id), result]))
+    const vectorById = new Map(vectorResults.map((result) => [String(result.id), result]))
+    return rrfMerge([keywordResults, vectorResults], (result) => String(result.id)).slice(0, limit).map((result) => {
+      const keywordHit = keywordById.has(String(result.id)); const vectorHit = vectorById.has(String(result.id))
+      return { ...result, match: keywordHit && vectorHit ? 'hybrid' : vectorHit ? 'vector' : 'keyword', score: result.rrfScore }
+    })
   },
 })
 
