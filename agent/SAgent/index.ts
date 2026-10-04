@@ -25,9 +25,11 @@ export {
   INITIAL_NOVEL_STATE,
   PHASE_ORDER,
   deriveNovelState,
+  renderStateBlock,
   novelStateSync,
   type Phase,
   type DerivedNovelState,
+  type NovelStateValue,
 } from "./state"
 
 export { subAgentTools, databaseTools } from "./tools"

@@ -200,19 +200,53 @@ export function deriveNovelState(novelId: number): DerivedNovelState {
 /* ==================== 状态同步中间件 ==================== */
 
 /**
- * 每次调模型之前，把状态同步成库里的实际情况。
+ * 把当前状态渲染成**给模型看的**一段文本。
  *
- * 为什么放在 `beforeModel` 而不是工具里：
+ * 这段文本会被注入每一轮调用的 systemPrompt（见下面 novelStateSync 的 wrapModelCall）。
+ * 写法上刻意"短、可扫、每行一个事实"——它是**状态**，不是解释；
+ * 需要解释的规则在 prompt.ts / skill 里，两者分工不要混。
+ */
+export function renderStateBlock(state: Partial<NovelStateValue>): string {
+  const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : [])
+  const drafted = arr(state.draftedChapterIdxs)
+  const finalized = arr(state.finalizedChapterIdxs)
+  const demands = arr(state.pendingDemands)
+
+  return [
+    "=== 当前状态（交给你的工具都基于它；每轮刷新，不要凭记忆猜进度）===",
+    `阶段：${state.phase ?? "未知"}`,
+    `进度：第 ${state.currentVolumeNo ?? 1} 卷｜下一章写第 ${state.currentChapterIdx ?? 1} 章`,
+    `世界观：${state.worldId ? `id=${state.worldId} version=${state.worldVersion}` : "未建立"}`,
+    `场上：角色 ${arr(state.characterIds).length} 个｜地点 ${arr(state.locationIds).length} 个｜卷 ${arr(state.volumeIds).length} 卷`,
+    `已写：起草 ${drafted.length} 章｜定稿 ${finalized.length} 章` +
+      (drafted.length > 0 ? `（有稿的章号：${drafted.join("、")}）` : ""),
+    `待办需求：${demands.length > 0 ? demands.join(" / ") : "无"}`,
+    "=== 状态结束 ===",
+  ].join("\n")
+}
+
+/**
+ * 状态同步中间件——把状态**喂给模型**。
+ *
+ * 它做两件事，缺一不可。之前只做了第一件，结果状态躺在 graph 里、模型看不见，
+ * 等于没做——中心 agent 只能靠第一条 user message 里那份过期的快照判断进度。
+ *
+ *   ① `beforeModel`：把状态刷成库里的实际情况（推导，见 deriveNovelState）
+ *   ② `wrapModelCall`：把这份状态拼进**这一次调用的 systemPrompt**
+ *
+ * 为什么放在 `beforeModel` / `wrapModelCall` 而不是工具里：
  *   · 工具回写一定会漏（新增一个工具就多一处要记得写）
- *   · beforeModel 是每轮必经之地，且此时还没产生新的 tool 结果，
+ *   · 这两个钩子每轮必经，且此时还没产生新的 tool 结果，
  *     状态与库必然一致——不存在"读到一半的中间态"
  *
- * 拿不到 novelId 时直接跳过（不猜、不用默认值），
- * 让状态停在原处比写错一个 id 安全。
+ * 拿不到 novelId 时**直接跳过**（不猜、不用默认值）：
+ * 让状态停在原处，比拿一个错的 id 去查错库安全。
  */
 export function novelStateSync() {
   return {
     name: "NovelStateSync",
+
+    /** ① 推导：把状态刷成库里的实际情况 */
     beforeModel: (state: { novelId?: number | null }) => {
       const novelId = state.novelId
       if (typeof novelId !== "number" || !Number.isInteger(novelId)) return undefined
@@ -222,6 +256,30 @@ export function novelStateSync() {
         // 推导失败（比如库还没建表）不该让整个 agent 停摆，保持上一版状态即可
         return undefined
       }
+    },
+
+    /**
+     * ② 注入：把状态拼进这次调用的 systemPrompt。
+     *
+     * 用 `wrapModelCall` 而不是官方的 `dynamicSystemPromptMiddleware`：
+     * 前者能拿到**完整的 graph state**（含 novelId），后者只给 `AgentBuiltInState`（基本只有 messages）。
+     * 拿不到 novelId 就得从 runtime.context 绕，多一层配置，不划算。
+     *
+     * 请求/处理的类型这里显式写成 `any`：这两个类型（ModelRequest /
+     * WrapModelCallHandler）在 langchain 里没有对外导出，硬去深链会把我们
+     * 绑在它的目录结构上。结构本身是稳的
+     * （{ model, messages, systemPrompt, tools, state, runtime } → handler(request)），
+     * 所以按结构写；代价是这一处没有类型检查，改动时请对着上面那行结构核对。
+     */
+    wrapModelCall: async (request: any, handler: any) => {
+      const base: string = request.systemPrompt ?? ""
+      const state: Partial<NovelStateValue> | undefined = request.state
+      const novelId = state?.novelId
+      // 没定位到小说就不注入：宁可让模型看到静态提示词，也不要喂一段空状态骗它
+      if (typeof novelId !== "number" || !Number.isInteger(novelId)) {
+        return handler(request)
+      }
+      return handler({ ...request, systemPrompt: `${base}\n\n${renderStateBlock(state ?? {})}` })
     },
   }
 }
