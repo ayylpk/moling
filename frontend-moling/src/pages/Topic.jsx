@@ -1,5 +1,4 @@
 import BlockTitle from '../components/BlockTitle.jsx';
-import EmptyState from '../components/EmptyState.jsx';
 
 /**
  * 选题页：一本书的「题眼」四问，来自 outline.json → direction（Architect 产物）。
@@ -36,24 +35,17 @@ const DIRECTIONS = [
 export default function Topic() {
   return (
     <main className="wb-page enter">
-      <BlockTitle
-        mark="题"
-        name="选题"
-        anno="outline.json → direction · ArchitectAgent 产"
-      />
+      <BlockTitle mark="题" name="选题" />
 
       <div className="dir-grid">
-        {DIRECTIONS.map((d, i) => (
+        {DIRECTIONS.map((d) => (
           <article className="card dir-card" key={d.en}>
             <div className="field">
               <p className="field__k" data-en={d.en}>
                 {d.zh}
               </p>
               {/* 题眼是文气所在，一律宋体读 */}
-              <p className="field__v field__v--prose">
-                {d.text}
-                <em className="demo">示例</em>
-              </p>
+              <p className="field__v field__v--prose">{d.text}</p>
             </div>
           </article>
         ))}
@@ -62,29 +54,7 @@ export default function Topic() {
       <div className="chip-row" style={{ marginTop: 22, gap: 12 }}>
         <button type="button" className="btn btn--primary">重新起盘</button>
         <button type="button" className="btn">采纳 · 往大纲走</button>
-        <span className="anno">
-          起盘 = POST /generation/plan {`{stage:'outline'}`} · 本阶段含 direction/structure/pacing/constraints/chapters
-        </span>
       </div>
-
-      {/* 两态示范（壳期给设计复盘看）：新书未选题 / 正在起盘 */}
-      <section className="block">
-        <BlockTitle mark="态" name="两态样例" anno="接数后整块删除" />
-        <div className="dir-grid">
-          <div className="card">
-            <EmptyState
-              title="纸上还没落题"
-              hint="新书未选题时显示 · ink-smoke 淡烟（DESIGN 第六节「待用」位，首启用）"
-            />
-          </div>
-          <div className="slot">
-            <span>起盘中 · 骨架屏位</span>
-            <span className="anno">running 时以旧宣实条占位，不做流光动画（红线 6）</span>
-            <div className="skel" style={{ width: '80%' }} />
-            <div className="skel" style={{ width: '62%' }} />
-          </div>
-        </div>
-      </section>
     </main>
   );
 }

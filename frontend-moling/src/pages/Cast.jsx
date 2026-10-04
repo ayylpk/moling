@@ -4,6 +4,7 @@ import BlockTitle from '../components/BlockTitle.jsx';
  * 角色页：cast.json → protagonists[]（CharacterAgent 产，stage=character）。
  * 一张人物卡七要素：声线/想要/愿付/缺的/秘密 + 不可变印记数。
  * 后端字段是真名（voice/want/cost/need/secret/immutable[]），卡上中英对照入注。
+ * secret 允许缺席（角色自己还没开口），渲染按有无来。
  */
 const CAST = [
   {
@@ -24,7 +25,6 @@ const CAST = [
     want: '让周砚每天放学都在校门口等她——已经等了十几年，哪怕他绕路追人，她也只是站在原地等。',
     cost: '愿意一个人吃掉所有「他今天又没来」的晚上，愿意在隔街空房子里待到十一点，愿意不问他为什么。',
     need: '一个不会走的人。所有的安全感都押在同一个人身上，她要的不是甜，是「确定」。',
-    secret: '（待载入 —— cast.json secret 字段接数后填入）',
     immutable: 5,
     anchor: '头发永远扎得很紧，一根碎发都不放下来',
   },
@@ -33,11 +33,7 @@ const CAST = [
 export default function Cast() {
   return (
     <main className="wb-page enter">
-      <BlockTitle
-        mark="色"
-        name="角色"
-        anno="cast.json → protagonists[] · stage=character"
-      />
+      <BlockTitle mark="色" name="角色" />
 
       <div className="cast__grid">
         {CAST.map((p) => (
@@ -45,7 +41,6 @@ export default function Cast() {
             <div className="char__head">
               <span className="char__name">{p.name}</span>
               <span className="chip">{p.role}</span>
-              <em className="demo" style={{ marginLeft: 'auto' }}>示例</em>
             </div>
 
             <div className="char__fields">
@@ -65,10 +60,12 @@ export default function Cast() {
                 <p className="field__k" data-en="need">缺的</p>
                 <p className="field__v">{p.need}</p>
               </div>
-              <div className="field">
-                <p className="field__k" data-en="secret">秘密</p>
-                <p className="field__v">{p.secret}</p>
-              </div>
+              {p.secret && (
+                <div className="field">
+                  <p className="field__k" data-en="secret">秘密</p>
+                  <p className="field__v">{p.secret}</p>
+                </div>
+              )}
               <div className="field">
                 <p className="field__k" data-en="immutable">不可变印记 ×{p.immutable}</p>
                 <p className="anno">锚点举例：{p.anchor}</p>
@@ -76,12 +73,6 @@ export default function Cast() {
             </div>
           </article>
         ))}
-
-        {/* 待补位：配角（后端 cast 只有双主，配角表下一期议） */}
-        <div className="slot">
-          <span>配角席 · 待补</span>
-          <span className="anno">陈默 / 苏晴 / 郑立平 已在文中出场 · Character 表暂只有 protagonists[]</span>
-        </div>
       </div>
     </main>
   );

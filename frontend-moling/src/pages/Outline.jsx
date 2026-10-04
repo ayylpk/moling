@@ -44,11 +44,7 @@ export default function Outline() {
   const peak = Math.max(...TENSION);
   return (
     <main className="wb-page enter">
-      <BlockTitle
-        mark="纲"
-        name="大纲"
-        anno="outline.json → structure / pacing / constraints"
-      />
+      <BlockTitle mark="纲" name="大纲" />
 
       {/* 三幕 */}
       <section className="acts">
@@ -62,7 +58,7 @@ export default function Outline() {
             <p className="anno act__range">{a.range} · keyEvents {a.events} 条</p>
             <div className="field">
               <p className="field__k">幕的差事</p>
-              <p className="field__v">{a.goal}<em className="demo">摘录</em></p>
+              <p className="field__v">{a.goal}</p>
             </div>
           </article>
         ))}
@@ -70,7 +66,7 @@ export default function Outline() {
 
       {/* 张力曲线：高度=intensity，峰顶染赭石（进度职，红不上曲线） */}
       <section className="block">
-        <BlockTitle mark="力" name="张力曲线" anno="pacing.tensionCurve · 第 1–14 / 50 章真值" />
+        <BlockTitle mark="力" name="张力曲线 · 第 1–14 章" />
         <div className="tension">
           {TENSION.map((v, i) => (
             <b
@@ -80,22 +76,19 @@ export default function Outline() {
               title={`第 ${i + 1} 章 · intensity ${v}`}
             />
           ))}
-          <span className="anno" style={{ marginLeft: 14, alignSelf: 'flex-end' }}>
-            …余 36 章待接
-          </span>
         </div>
       </section>
 
       {/* 硬约束：时间线 + 地点名单（写手不许越的东西） */}
       <section className="block">
-        <BlockTitle mark="束" name="硬约束" anno="constraints.timeline / constraints.locations" />
+        <BlockTitle mark="束" name="硬约束" />
         <div className="card">
           <div className="field">
             <p className="field__k">时间线</p>
             <p className="field__v field__v--prose">
               第一段人生：高三百日誓师当天（三月上旬）起，经四次月考、梅雨季、高考，
               到高考结束后约一周的车祸与后事，约一百一十天。第 13 章末尾回到誓师那天清晨，
-              第二段人生从同一时刻重新开始。<em className="demo">摘录</em>
+              第二段人生从同一时刻重新开始。
             </p>
           </div>
           <div className="field">

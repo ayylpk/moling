@@ -71,7 +71,7 @@ export default function Manuscript() {
 
   return (
     <main className="wb-page manuscript-page enter" style={{ maxWidth: 'none' }}>
-      <BlockTitle mark="稿" name="书稿" anno="卷 → 章 → 正文 · 自动保存仅在本页生效" />
+      <BlockTitle mark="稿" name="书稿" />
       <div className="manuscript__toolbar"><div className="volume-tabs">{VOLUMES.map((item) => <button className={item.id === volumeId ? 'is-active' : ''} type="button" onClick={() => setVolumeId(item.id)} key={item.id}>卷 {item.no} · {item.name}</button>)}</div><div className="manuscript__save"><span className="anno">{lastSaved}</span><button type="button" className="btn btn--primary" disabled={!dirty} onClick={() => saveText()}>确认保存</button></div></div>
       <div className="ms-editor">
         <nav className="ms-editor__toc"><p className="eyebrow">卷 {volume.no} · {volume.chapters.length} 章</p><h3>{volume.name}</h3>{volume.chapters.map((item) => <button className={`toc-item${item.id === chapter?.id ? ' is-active' : ''}`} type="button" onClick={() => selectChapter(item.id)} key={item.id}><span className="toc-num">{String(item.idx).padStart(2, '0')}</span><span className="toc-name">{item.title}</span><span className={`toc-status is-${item.status}`}>{item.status === 'final' ? '终' : item.status === 'draft' ? '初' : '纲'}</span></button>)}{volume.chapters.length === 0 && <p className="anno">这一卷还没有章节。</p>}</nav>
