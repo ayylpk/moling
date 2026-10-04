@@ -32,4 +32,4 @@ export {
   type NovelStateValue,
 } from "./state"
 
-export { subAgentTools, databaseTools, taskTools, memoryTools, searchNovelMemory, rememberNovelMemory } from "./tools"
+export { subAgentTools, databaseTools, taskTools, memoryTools, searchNovelMemory, rememberNovelMemory, portraitTools, recordNovelMemoryEvent, recordNovelMemoryFact, updateCharacterPortrait } from "./tools"

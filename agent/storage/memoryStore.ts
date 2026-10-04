@@ -12,6 +12,7 @@ export type MemoryRecord = {
   chapterId?: number
   metadata?: Record<string, unknown>
   embedding?: number[]
+  stage?: 'L0' | 'L1' | 'L3'
 }
 export type MemorySearchOptions = { novelId: string; query: string; layer?: MemoryLayer; volumeId?: number; chapterId?: number; embedding?: number[]; limit?: number }
 export type MemorySearchResult = MemoryRecord & { id: number; match: 'keyword' | 'vector' | 'hybrid'; score: number }
@@ -32,7 +33,8 @@ const cosine = (left: number[], right: number[]): number => {
 export const createMemoryStore = (database: Database) => ({
   upsert(record: MemoryRecord): number {
     const existing = database.query('SELECT id FROM memory_items WHERE novel_id = ? AND source_type = ? AND source_id = ?').get(record.novelId, record.sourceType, record.sourceId) as { id: number } | null
-    database.query(`INSERT INTO memory_items (novel_id, layer, title, content, source_type, source_id, volume_id, chapter_id, metadata, embedding) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(novel_id, source_type, source_id) DO UPDATE SET layer=excluded.layer, title=excluded.title, content=excluded.content, volume_id=excluded.volume_id, chapter_id=excluded.chapter_id, metadata=excluded.metadata, embedding=excluded.embedding, updated_at=datetime('now','localtime')`).run(record.novelId, record.layer, record.title, record.content, record.sourceType, record.sourceId, record.volumeId ?? null, record.chapterId ?? null, JSON.stringify(record.metadata ?? {}), record.embedding ? JSON.stringify(record.embedding) : null)
+    const stage = record.stage ?? (record.layer === 'raw' ? 'L0' : 'L1')
+    database.query(`INSERT INTO memory_items (novel_id, stage, layer, title, content, source_type, source_id, volume_id, chapter_id, metadata, embedding) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(novel_id, source_type, source_id) DO UPDATE SET stage=excluded.stage, layer=excluded.layer, title=excluded.title, content=excluded.content, volume_id=excluded.volume_id, chapter_id=excluded.chapter_id, metadata=excluded.metadata, embedding=excluded.embedding, updated_at=datetime('now','localtime')`).run(record.novelId, stage, record.layer, record.title, record.content, record.sourceType, record.sourceId, record.volumeId ?? null, record.chapterId ?? null, JSON.stringify(record.metadata ?? {}), record.embedding ? JSON.stringify(record.embedding) : null)
     const row = database.query('SELECT id FROM memory_items WHERE novel_id = ? AND source_type = ? AND source_id = ?').get(record.novelId, record.sourceType, record.sourceId) as { id: number }
     if (existing) database.query('DELETE FROM memory_items_fts WHERE rowid = ?').run(existing.id)
     database.query('INSERT INTO memory_items_fts (rowid, title, content) VALUES (?, ?, ?)').run(row.id, ftsText(record.title), ftsText(record.content))
@@ -61,4 +63,4 @@ export const createMemoryStore = (database: Database) => ({
   },
 })
 
-const toResult = (row: Record<string, unknown>, match: 'keyword' | 'vector' | 'hybrid', score: number): MemorySearchResult => ({ id: Number(row.id), novelId: String(row.novel_id), layer: row.layer as MemoryLayer, title: String(row.title), content: String(row.content), sourceType: String(row.source_type), sourceId: String(row.source_id), volumeId: row.volume_id == null ? undefined : Number(row.volume_id), chapterId: row.chapter_id == null ? undefined : Number(row.chapter_id), metadata: JSON.parse(String(row.metadata ?? '{}')) as Record<string, unknown>, embedding: row.embedding ? JSON.parse(String(row.embedding)) as number[] : undefined, match, score })
+const toResult = (row: Record<string, unknown>, match: 'keyword' | 'vector' | 'hybrid', score: number): MemorySearchResult => ({ id: Number(row.id), novelId: String(row.novel_id), layer: row.layer as MemoryLayer, title: String(row.title), content: String(row.content), sourceType: String(row.source_type), sourceId: String(row.source_id), volumeId: row.volume_id == null ? undefined : Number(row.volume_id), chapterId: row.chapter_id == null ? undefined : Number(row.chapter_id), metadata: { ...JSON.parse(String(row.metadata ?? '{}')) as Record<string, unknown>, stage: row.stage }, embedding: row.embedding ? JSON.parse(String(row.embedding)) as number[] : undefined, stage: row.stage as 'L0' | 'L1' | 'L3', match, score })

@@ -1,14 +1,31 @@
 # 墨灵轻量 RAG 存储
 
-每部小说的 `resources/novels/<slug>/novel.sqlite` 内包含记忆表，不引入独立数据库服务。
+每部小说的 `resources/novels/<slug>/novel.sqlite` 内包含完整的 L0/L1/L3 小说记忆系统，不引入独立数据库服务。
 
 ## 当前能力
 
-- `memory_items` 保存原子事实、场景摘要、世界观、角色、剧情和章节记忆。
+- `L0` 保存章节事件、Agent 对话等原始记录，保留原文，不把推测直接升级为事实。
+- `L1` 保存可回溯的原子事实和场景摘要，带来源、卷章范围、角色和置信度。
+- `L3` 保存角色动态画像的当前版本和历史版本，和 `characters` 固定角色表互补，不覆盖固定设定。
+- `memory_items` 是统一索引表，保存上述三层以及世界观、剧情、章节资料。
 - `memory_items_fts` 提供 SQLite FTS5 关键词召回。
 - `embedding` 以 JSON 数组保存，已支持余弦相似度召回；配置 `SILICONFLOW_API_KEY` 后自动调用硅基流动生成向量，调用失败时自动使用 FTS。
 - 每条记忆保留 `sourceType`、`sourceId`、`volumeId`、`chapterId`，便于 Agent 回溯证据。
 - 中心 Agent 通过 `search_novel_memory` 检索，通过 `remember_novel_memory` 保存确认后的世界观、角色、剧情和章节事实。
+- 中心 Agent 通过 `record_novel_memory_event` 写 L0、`record_novel_memory_fact` 写 L1、`update_character_portrait` 更新 L3。
+
+## 三层数据流
+
+```text
+章节正文 / Agent 事件
+        -> L0 原始记录
+        -> L1 原子事实与场景摘要
+        -> L3 角色动态画像版本
+        -> 统一 FTS5 + SiliconFlow Embedding 检索
+        -> 中心 Agent
+```
+
+L3 更新必须携带 `basedOnFactIds`。Embedding 服务失败时不会丢失原始记录、事实或画像，只会将该条标记为待补向量，并继续使用 FTS5 检索。
 
 ## HTTP 接口
 
