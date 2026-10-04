@@ -3,6 +3,10 @@
   "module": "index.ts",
   "type": "module",
   "private": true,
+  "scripts": {
+    "api:dev": "bun run agent/storage/server.ts",
+    "frontend:dev": "npm --prefix frontend-moling run dev"
+  },
   "devDependencies": {
     "@types/bun": "latest"
   },

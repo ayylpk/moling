@@ -1,125 +1,82 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import BlockTitle from '../components/BlockTitle.jsx';
-
-/**
- * 书稿页：DESIGN.md 第四节的三栏定稿 —— 章目录 200 / 正文 ≤68ch / 大纲浮签 260。
- * 浮签可收起（收拢成一枚竖排「签」口）。正文区是唯一允许出现宋体大字号的地方：
- * 17px / 行高 2.05 / 首行缩进两字，读稿如读书。
- *
- * 数据源：正文 = artifact_path 的 md（stage=chapter/polish 完成后落盘）；
- * 浮签 = outline.chapters[i] 的 hook/emotion。此处贴第 1 章真产物。
- */
-const CH = {
-  no: '第 1 章',
-  title: '倒计时一百天',
-  premise:
-    '在虚构的南方地级市「临江市」，走读制普通高中「临江三中」的高三男生周砚，在第一段人生里因一场车祸失去了青梅竹马林晚，随后回到高三百日誓师那天重来一次；这一次他选择了一直住在隔街那栋空房子里的林晚，而这次重来本身要他用第二段人生的终点来偿还。',
-  goal: '周砚想在百日誓师这天让苏晴注意到他，为此让陈默帮他把一封折成方块的纸条在散会时递到苏晴手上。',
-  conflict: '纸条传到第三排就被郑立平截住，他当着全班念出「苏晴同学，放学能不能一起走一段」，然后把它贴在后墙倒计时数字旁边。',
-  hook: '散会后所有人都往外走，周砚回头看了一眼后墙，那张纸条还贴在那儿，倒计时数字从纸背面透出来。',
-  emotion: '从早上进教室时的兴奋，落到被念出纸条那一刻的僵。',
-  words: '初稿 2976 → 润后 2972',
-  body: [
-    '六月还没到，教室已经热了。',
-    '周砚进教室的时候，早读的太阳正从东边那排窗户斜进来，整排桌面晒得发白。他坐靠窗第三排，手一按上去，木面烫手。他把书包从肩上卸下来，侧袋里那把黑柄折叠伞磕了一下桌腿。拉链拉到最上面，脖子那块有点闷，他没拉下来。',
-    '后墙黑板上，郑立平已经站在那儿了。',
-    '粉笔在手里转了一圈，第一笔没落下去。郑立平左手无名指第二指节缺一截，粉笔从他指缝里滑出去，掉在讲台边上，弹了一下。他弯腰捡起来，用剩下的那截手指重新夹紧。',
-  ],
-  said: '「一百天。」',
-};
-
-// 左栏章目录：前 6 章真名（outline.chapters），余者待接
-const TOC = [
-  ['01', '倒计时一百天'],
-  ['02', '坡道下面那棵树'],
-  ['03', '第一次月考'],
-  ['04', '梅雨里的伞'],
-  ['05', '晚自习二十二点十分'],
-  ['06', '隔街巷的第四级楼梯'],
-];
+import { VOLUMES } from '../lib/workbenchData.js';
+import { useWorkbench } from '../layout/WorkbenchLayout.jsx';
+import { api } from '../api/client.js';
 
 export default function Manuscript() {
-  const [noteOpen, setNoteOpen] = useState(true);
+  const { setSaving } = useWorkbench();
+  const [volumeId, setVolumeId] = useState(VOLUMES[0].id);
+  const volume = VOLUMES.find((item) => item.id === volumeId) || VOLUMES[0];
+  const [chapterId, setChapterId] = useState(volume.chapters[0]?.id || null);
+  const chapter = useMemo(() => volume.chapters.find((item) => item.id === chapterId) || volume.chapters[0], [volume, chapterId]);
+  const [text, setText] = useState(chapter?.text || '');
+  const [dirty, setDirty] = useState(false);
+  const [lastSaved, setLastSaved] = useState('刚刚');
+
+  useEffect(() => {
+    const next = volume.chapters[0];
+    setChapterId(next?.id || null);
+    setText(next?.text || '');
+    setDirty(false);
+  }, [volumeId]);
+
+  useEffect(() => {
+    if (!chapter) return undefined;
+    const cached = window.localStorage.getItem(`moling:chapter:${chapter.id}:draft`);
+    setText(cached ? JSON.parse(cached).text : (chapter.text || ''));
+    setDirty(false);
+    let cancelled = false;
+    api.getChapterText(chapter.id).then((result) => {
+      if (!cancelled && result?.text) setText(result.text);
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [chapterId]);
+
+  useEffect(() => {
+    if (!dirty) return undefined;
+    const timer = window.setTimeout(() => saveText('auto'), 10000);
+    return () => window.clearTimeout(timer);
+  }, [dirty, text]);
+
+  useEffect(() => {
+    const flush = () => {
+      if (dirty) saveText('close');
+    };
+    window.addEventListener('beforeunload', flush);
+    return () => {
+      window.removeEventListener('beforeunload', flush);
+      flush();
+    };
+  }, [dirty, text]);
+
+  const saveText = (reason = 'manual') => {
+    if (!chapter || !dirty) return;
+    window.localStorage.setItem(`moling:chapter:${chapter.id}:draft`, JSON.stringify({ text, savedAt: new Date().toISOString() }));
+    setSaving('saving');
+    api.saveChapterText(chapter.id, text).then(() => {
+      setDirty(false);
+      setLastSaved(reason === 'auto' ? '自动保存 · 刚刚' : '已保存 · 刚刚');
+      setSaving('saved');
+    }).catch(() => {
+      setLastSaved('本地草稿已保存 · API 待命');
+      setSaving('saved');
+    });
+  };
+
+  const selectChapter = (nextId) => {
+    if (dirty) saveText();
+    setChapterId(nextId);
+  };
 
   return (
-    <main className="wb-page enter" style={{ maxWidth: 'none' }}>
-      <BlockTitle
-        mark="稿"
-        name="书稿"
-        anno="artifact_path · chapter-1-polished.json → 本 md"
-      />
-
-      <div className={`ms${noteOpen ? '' : ' ms--hide-note'}`}>
-        {/* 一、章目录 */}
-        <nav className="ms__toc">
-          {TOC.map(([no, name], i) => (
-            <div className={`toc-item${i === 0 ? ' is-active' : ''}`} key={no}>
-              <span className="toc-num">{no}</span>
-              <span className="toc-name">{name}</span>
-            </div>
-          ))}
-          <div className="toc-item" style={{ color: 'var(--m-ink-3)' }}>
-            <span className="toc-num">…</span>
-            <span className="toc-name">共 50 章待接</span>
-          </div>
-        </nav>
-
-        {/* 二、正文 */}
-        <article className="ms__paper">
-          <h2 className="ms__title">
-            {CH.no}　{CH.title}
-          </h2>
-
-          <blockquote className="ms__premise">{CH.premise}</blockquote>
-
-          <div className="ms__meta anno">
-            <p><b style={{ color: 'var(--m-ink-2)' }}>本章目标</b>　{CH.goal}</p>
-            <p style={{ marginTop: 6 }}><b style={{ color: 'var(--m-ink-2)' }}>冲突</b>　{CH.conflict}</p>
-          </div>
-
-          <div className="ms__body">
-            {CH.body.map((p, i) => (
-              <p key={i}>{p}</p>
-            ))}
-            <p className="ms__line">{CH.said}</p>
-          </div>
-
-          <p className="ms__stat anno">
-            字数 {CH.words} · chapter <span style={{ color: 'var(--m-indigo)' }}>done</span> ·
-            polish <span style={{ color: 'var(--m-indigo)' }}>done</span>
-          </p>
-        </article>
-
-        {/* 三、大纲浮签（右上收放） */}
-        <aside className="ms__note">
-          {noteOpen ? (
-            <div className="note-card">
-              <div className="note-card__head">
-                <span>大纲浮签</span>
-                <button type="button" className="btn btn--sm" onClick={() => setNoteOpen(false)}>
-                  收起
-                </button>
-              </div>
-              <div className="note-card__body">
-                <div className="field">
-                  <p className="field__k">结尾钩子</p>
-                  <p className="field__v">{CH.hook}</p>
-                </div>
-                <div className="field">
-                  <p className="field__k">情绪落点</p>
-                  <p className="field__v">{CH.emotion}</p>
-                </div>
-                <p className="anno" style={{ marginTop: 12 }}>
-                  chapters[0].hook / emotion · 写完自动核销
-                </p>
-              </div>
-            </div>
-          ) : (
-            <button type="button" className="note-tab" onClick={() => setNoteOpen(true)}>
-              浮签
-            </button>
-          )}
-        </aside>
+    <main className="wb-page manuscript-page enter" style={{ maxWidth: 'none' }}>
+      <BlockTitle mark="稿" name="书稿" anno="卷 → 章 → 正文 · 自动保存仅在本页生效" />
+      <div className="manuscript__toolbar"><div className="volume-tabs">{VOLUMES.map((item) => <button className={item.id === volumeId ? 'is-active' : ''} type="button" onClick={() => setVolumeId(item.id)} key={item.id}>卷 {item.no} · {item.name}</button>)}</div><div className="manuscript__save"><span className="anno">{lastSaved}</span><button type="button" className="btn btn--primary" disabled={!dirty} onClick={() => saveText()}>确认保存</button></div></div>
+      <div className="ms-editor">
+        <nav className="ms-editor__toc"><p className="eyebrow">卷 {volume.no} · {volume.chapters.length} 章</p><h3>{volume.name}</h3>{volume.chapters.map((item) => <button className={`toc-item${item.id === chapter?.id ? ' is-active' : ''}`} type="button" onClick={() => selectChapter(item.id)} key={item.id}><span className="toc-num">{String(item.idx).padStart(2, '0')}</span><span className="toc-name">{item.title}</span><span className={`toc-status is-${item.status}`}>{item.status === 'final' ? '终' : item.status === 'draft' ? '初' : '纲'}</span></button>)}{volume.chapters.length === 0 && <p className="anno">这一卷还没有章节。</p>}</nav>
+        <article className="ms-editor__paper">{chapter ? <><div className="ms-editor__heading"><p className="eyebrow">第 {chapter.idx} 章</p><h2>{chapter.title}</h2><span className={`status is-${chapter.status === 'final' ? 'done' : chapter.status === 'draft' ? 'writing' : 'draft'}`}>{chapter.status === 'final' ? '终稿' : chapter.status === 'draft' ? '初稿' : '仅有章纲'}</span></div><textarea className="manuscript-input" value={text} onChange={(event) => { setText(event.target.value); setDirty(true); setSaving('dirty'); }} placeholder="从这里开始写本章正文……" spellCheck="false" /><p className="manuscript__count">{text.length.toLocaleString()} 字 · {dirty ? '修改尚未落盘' : '内容已保存'}</p></> : <div className="empty"><p className="empty__title">选择一章开始阅读</p><p className="anno">章节正文会在打开后启用定时保存。</p></div>}</article>
+        <aside className="ms-editor__note">{chapter ? <><div className="note-card__head"><span>章节浮签</span><span className="anno">chapter · {chapter.idx}</span></div><div className="field"><p className="field__k">结尾钩子</p><p className="field__v">{chapter.hook}</p></div><div className="field"><p className="field__k">情绪落点</p><p className="field__v">{chapter.emotion}</p></div><div className="field"><p className="field__k">保存规则</p><p className="field__v anno">确认按钮即时保存；修改后 10 秒自动保存；离开页面前再保存一次。</p></div></> : <p className="anno">暂无章节信息</p>}</aside>
       </div>
     </main>
   );

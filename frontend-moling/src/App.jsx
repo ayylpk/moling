@@ -11,6 +11,7 @@ import Plot from './pages/Plot.jsx';
 import Style from './pages/Style.jsx';
 import Manuscript from './pages/Manuscript.jsx';
 import World from './pages/World.jsx';
+import Collaboration from './pages/Collaboration.jsx';
 
 // 系统开关「减少动态效果」：直接跳过启动页进首页
 const reducedMotion = window
@@ -51,8 +52,8 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/w" element={<WorkbenchLayout />}>
-              {/* 进工作台默认落「书架」 */}
-              <Route index element={<Navigate to="desk" replace />} />
+              <Route index element={<Navigate to="collaboration" replace />} />
+              <Route path="collaboration" element={<Collaboration />} />
               <Route path="desk" element={<Desk />} />
               <Route path="topic" element={<Topic />} />
               <Route path="outline" element={<Outline />} />
