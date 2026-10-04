@@ -19,6 +19,7 @@ export default function Collaboration({ onOpenManuscript }) {
         <button className="btn btn--primary" type="button" onClick={() => onOpenManuscript?.()}>打开书稿</button>
       </div>
 
+      <div className="workflow-guide"><span><b>01</b> 上游约束</span><i /><span><b>02</b> 中心调度</span><i /><span><b>03</b> 产出与校验</span></div>
       <section className="agent-map" aria-label="Agent 协作图">
         <div className="agent-map__lines" aria-hidden="true">
           <span className="agent-line agent-line--top" />
@@ -65,6 +66,7 @@ function AgentNode({ agent, selected, onSelect }) {
     <button className={`agent-node is-${agent.state}${selected ? ' is-selected' : ''}`} type="button" onClick={() => onSelect(agent.id)} title={`${agent.name}：${agent.summary}`}>
       <span className="agent-node__mark">{agent.mark}</span>
       <span className="agent-node__name">{agent.name}</span>
+      <span className="agent-node__summary">{agent.summary}</span>
       <span className="agent-node__state"><i />{stateLabel[agent.state]}</span>
     </button>
   );
