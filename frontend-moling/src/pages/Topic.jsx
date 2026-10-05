@@ -1,59 +1,44 @@
 import BlockTitle from '../components/BlockTitle.jsx';
+import { useWorkbench } from '../layout/WorkbenchLayout.jsx';
 
 /**
- * 选题页：一本书的「题眼」四问，来自 outline.json → direction（Architect 产物）。
- * 四个字段是后端定死的形状：logline / theme / coreConflict / endingDirection。
- * 值为 10/2 真产物摘录（截断加 …），接数后原样换掉即可，不动版式。
+ * 选题页：一本书的「题眼」四问 —— logline / theme / coreConflict / endingDirection。
+ *
+ * 这四个字段存在 `outline_anchors`（全篇锚点，由第一卷大纲定稿时写入）。
+ * ⚠️ 现在**没有任何东西往那张表写**（大纲这一类还没从 my-app 迁到 per-novel 库），
+ * 所以这一页只能如实说"还没有" —— 之前这里摆的是另一本书的题眼。
+ * 表一有产出，这一页照原来的四张卡渲染即可（字段名就是它定死的形状）。
  */
-const DIRECTIONS = [
-  {
-    zh: '一句话故事',
-    en: 'logline',
-    text:
-      '一个在车祸里失去青梅竹马的临江三中高三男生周砚，带着第一段人生的全部记忆回到百日誓师那天清晨，用仅有的一次重来去追回隔街那个一直等他的女孩……',
-  },
-  {
-    zh: '主题',
-    en: 'theme',
-    text:
-      '一个人只有承认自己一直在被谁等着，才配得上那个等了他十几年的人；而真正的偿还不是活下来，是把每一句该说的话都说在当下。',
-  },
-  {
-    zh: '核心冲突',
-    en: 'coreConflict',
-    text:
-      '周砚要在只有一次、且终点不可推迟的第二段人生里，把第一段人生里所有没说出口的话全部说给林晚听；他每用预知改一件事，林晚在第一段人生里的样子就模糊一分……',
-  },
-  {
-    zh: '结局走向',
-    en: 'endingDirection',
-    text:
-      '周砚活过了那场本该撞死林晚的车祸，自己却没能活到最后；录取通知书下来，两张一模一样的，林晚在急诊门口看着它们，没有崩溃，坦然接受……',
-  },
+const FIELDS = [
+  { zh: '一句话故事', en: 'logline' },
+  { zh: '主题', en: 'theme' },
+  { zh: '核心冲突', en: 'coreConflict' },
+  { zh: '结局走向', en: 'endingDirection' },
 ];
 
 export default function Topic() {
+  const { novel } = useWorkbench();
+
   return (
     <main className="wb-page enter">
       <BlockTitle mark="题" name="选题" />
 
       <div className="dir-grid">
-        {DIRECTIONS.map((d) => (
-          <article className="card dir-card" key={d.en}>
+        {FIELDS.map((field) => (
+          <article className="card dir-card" key={field.en}>
             <div className="field">
-              <p className="field__k" data-en={d.en}>
-                {d.zh}
-              </p>
-              {/* 题眼是文气所在，一律宋体读 */}
-              <p className="field__v field__v--prose">{d.text}</p>
+              <p className="field__k" data-en={field.en}>{field.zh}</p>
+              <p className="field__v anno">尚未定稿</p>
             </div>
           </article>
         ))}
       </div>
 
-      <div className="chip-row" style={{ marginTop: 22, gap: 12 }}>
-        <button type="button" className="btn btn--primary">重新起盘</button>
-        <button type="button" className="btn">采纳 · 往大纲走</button>
+      <div className="card" style={{ marginTop: 22 }}>
+        <p className="anno">
+          {novel ? `《${novel.title}》还没有题眼。` : '书架上还没有书稿。'}
+          这四个字段是「全篇锚点」，由第一卷大纲定稿时一次性写死，后续卷只许原样回填、不许重写。
+        </p>
       </div>
     </main>
   );
