@@ -339,7 +339,7 @@ export class SqliteCheckpointSaver extends BaseCheckpointSaver {
 /* ==================== ② 状态 ==================== */
 
 /**
- * 状态定义本身在 ./SAgent/state.ts —— 它归 SAgent（那是 SAgent 的状态），
+ * 状态定义本身在 ./SAgent/stateLite.ts —— 它归 SAgent（那是 SAgent 的状态），
  * 由 SAgent 的 `stateSchema` 声明、由它的 `novelStateSync` 中间件维护。
  * system.ts 只把组装要用的名字转出去，**不再自己定义一份**：
  * 两份定义迟早会分叉，而状态分叉是最难查的一类 bug。

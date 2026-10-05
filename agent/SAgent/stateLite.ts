@@ -39,6 +39,32 @@ export type NovelStateValue = {
   completedTaskKeys: string[]
 }
 
+/**
+ * 状态种子：还没接上小说时的空壳。
+ *
+ * `agent/system.ts` 的 `seed` 就是它 + 真实的 novelId/slug —— invoke 时带上，
+ * `novelStateSync` 才有推导状态的入口（拿不到 id 就整轮跳过，见下方中间件）。
+ *
+ * 一开始长在旧的 `state.ts` 里，迁到 stateLite 时漏了带着走，
+ * 结果 system.ts 的 import 解析不到、`bun agent/run.ts` 直接起不来。
+ */
+export const INITIAL_NOVEL_STATE: NovelStateValue = {
+  novelId: null,
+  slug: null,
+  phase: 'init',
+  currentVolumeNo: 1,
+  currentChapterIdx: 1,
+  worldId: null,
+  worldVersion: null,
+  characterIds: [],
+  locationIds: [],
+  volumeIds: [],
+  draftedChapterIdxs: [],
+  finalizedChapterIdxs: [],
+  pendingDemands: [],
+  completedTaskKeys: [],
+}
+
 export const deriveNovelState = (novelId: number): Omit<NovelStateValue, 'novelId' | 'slug'> => {
   const catalog = openCatalogDatabase()
   const novel = catalog.query('SELECT slug FROM novels WHERE id = ?').get(novelId) as { slug: string } | null

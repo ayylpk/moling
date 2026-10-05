@@ -22,6 +22,7 @@ export { COMPACT_PROMPT } from "./compact"
 
 export {
   NovelState,
+  INITIAL_NOVEL_STATE,
   PHASE_ORDER,
   deriveNovelState,
   renderStateBlock,
