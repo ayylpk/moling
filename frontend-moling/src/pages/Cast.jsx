@@ -1,4 +1,7 @@
 import BlockTitle from '../components/BlockTitle.jsx';
+import { useEffect, useState } from 'react';
+import { api } from '../api/client.js';
+import { useWorkbench } from '../layout/WorkbenchLayout.jsx';
 
 /**
  * 角色页：cast.json → protagonists[]（CharacterAgent 产，stage=character）。
@@ -31,12 +34,37 @@ const CAST = [
 ];
 
 export default function Cast() {
+  const { novel } = useWorkbench();
+  const [portraits, setPortraits] = useState([]);
+
+  useEffect(() => {
+    let active = true;
+    api.listPortraits(novel.id).then((items) => { if (active && Array.isArray(items)) setPortraits(items); }).catch(() => {});
+    return () => { active = false; };
+  }, [novel.id]);
+
+  const cards = portraits.length > 0 ? portraits.map((portrait) => ({
+    name: portrait.character_name || `角色 ${portrait.character_id}`,
+    role: `动态画像 v${portrait.version}`,
+    voice: portrait.profile,
+    tags: JSON.parse(portrait.tags || '[]'),
+    source: JSON.parse(portrait.based_on_fact_ids || '[]').length,
+  })) : CAST.map((person) => ({ ...person, tags: [], source: 0 }));
+
   return (
     <main className="wb-page enter">
       <BlockTitle mark="色" name="角色" />
 
+      <div className="portrait-intro">
+        <span className="portrait-intro__mark">L3</span>
+        <div>
+          <strong>动态画像</strong>
+          <p>由小说记忆自动归并，只展示当前状态，不改动角色固定设定。</p>
+        </div>
+      </div>
+
       <div className="cast__grid">
-        {CAST.map((p) => (
+        {cards.map((p) => (
           <article className="card char" key={p.name}>
             <div className="char__head">
               <span className="char__name">{p.name}</span>
@@ -45,31 +73,18 @@ export default function Cast() {
 
             <div className="char__fields">
               <div className="field">
-                <p className="field__k" data-en="voice">声线</p>
+                <p className="field__k" data-en="profile">当前画像</p>
                 <p className="field__v field__v--prose">{p.voice}</p>
               </div>
-              <div className="field">
-                <p className="field__k" data-en="want">想要</p>
-                <p className="field__v">{p.want}</p>
-              </div>
-              <div className="field">
-                <p className="field__k" data-en="cost">愿付</p>
-                <p className="field__v">{p.cost}</p>
-              </div>
-              <div className="field">
-                <p className="field__k" data-en="need">缺的</p>
-                <p className="field__v">{p.need}</p>
-              </div>
-              {p.secret && (
+              {p.tags?.length > 0 && <div className="field"><p className="field__k" data-en="tags">近期状态</p><div className="chip-row">{p.tags.map((tag) => <span className="chip" key={tag}>{tag}</span>)}</div></div>}
+              {p.source > 0 && <div className="field"><p className="field__k" data-en="evidence">依据</p><p className="field__v">{p.source} 条 L1 事实</p></div>}
+              {p.want && (
                 <div className="field">
-                  <p className="field__k" data-en="secret">秘密</p>
-                  <p className="field__v">{p.secret}</p>
+                  <p className="field__k" data-en="want">固定设定</p>
+                  <p className="field__v">{p.want}</p>
                 </div>
               )}
-              <div className="field">
-                <p className="field__k" data-en="immutable">不可变印记 ×{p.immutable}</p>
-                <p className="anno">锚点举例：{p.anchor}</p>
-              </div>
+              {p.immutable && <div className="field"><p className="field__k" data-en="immutable">固定印记 ×{p.immutable}</p><p className="anno">锚点举例：{p.anchor}</p></div>}
             </div>
           </article>
         ))}

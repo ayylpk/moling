@@ -22,5 +22,6 @@ describe('novel L1 extractor', () => {
 
     expect(prompt).toContain('第三章')
     expect(facts[0]).toMatchObject({ novelId: 'demo', sourceType: 'chapter_text', sourceId: 'chapter:3:fact:1', chapterId: 3, confidence: 0.9 })
+    expect(facts[0]?.metadata).toMatchObject({ category: 'character_state', extractor: 'novel-l1' })
   })
 })

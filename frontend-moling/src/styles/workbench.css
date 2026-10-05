@@ -518,6 +518,24 @@
   gap: 12px;
 }
 
+.portrait-intro {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 18px 0 22px;
+  padding: 14px 16px;
+  border-left: 3px solid var(--m-cinnabar);
+  background: var(--m-paper-2);
+}
+.portrait-intro__mark {
+  color: var(--m-cinnabar);
+  font-family: var(--f-display);
+  font-size: 20px;
+  letter-spacing: .1em;
+}
+.portrait-intro strong { font-family: var(--f-display); font-size: 17px; font-weight: 400; color: var(--m-ink); }
+.portrait-intro p { margin: 3px 0 0; color: var(--m-ink-3); font-size: 13px; }
+
 .char__name {
   font-family: var(--f-display);
   font-size: 21px;

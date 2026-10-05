@@ -4,6 +4,7 @@ import { createPortraitPipeline, type L0Event, type L1Fact } from './portraitPip
 
 type AutomationOptions = { embed: EmbeddingClient['embed']; maxAttempts?: number }
 type FactExtractor = (event: L0Event) => Promise<L1Fact[]>
+type FactHandler = (facts: L1Fact[], factIds: number[]) => Promise<void>
 type JobRow = { id: number; payload: string; attempts: number }
 
 export const createMemoryAutomation = (database: Database, options: AutomationOptions) => {
@@ -20,7 +21,7 @@ export const createMemoryAutomation = (database: Database, options: AutomationOp
     pending(): number {
       return Number((database.query("SELECT count(*) AS count FROM memory_jobs WHERE status = 'pending'").get() as { count: number }).count)
     },
-    async processNext(extract: FactExtractor): Promise<{ status: 'done' | 'retry' | 'failed' | 'empty'; factIds: number[]; error?: string }> {
+    async processNext(extract: FactExtractor, onFacts?: FactHandler): Promise<{ status: 'done' | 'retry' | 'failed' | 'empty'; factIds: number[]; error?: string }> {
       const job = database.query("SELECT id, payload, attempts FROM memory_jobs WHERE status = 'pending' ORDER BY id LIMIT 1").get() as JobRow | null
       if (!job) return { status: 'empty', factIds: [] }
       database.query("UPDATE memory_jobs SET status='running', updated_at=datetime('now','localtime') WHERE id = ?").run(job.id)
@@ -29,6 +30,7 @@ export const createMemoryAutomation = (database: Database, options: AutomationOp
         const facts = await extract(event)
         const factIds: number[] = []
         for (const fact of facts) factIds.push((await pipeline.recordFact(fact)).id)
+        if (onFacts && facts.length > 0) await onFacts(facts, factIds)
         database.query("UPDATE memory_jobs SET status='done', attempts=attempts + 1, error='', updated_at=datetime('now','localtime') WHERE id = ?").run(job.id)
         return { status: 'done', factIds }
       } catch (error) {

@@ -7,6 +7,9 @@ import { createSiliconFlowEmbeddingClient } from "../../storage/embedding"
 import { createPortraitPipeline } from "../../storage/portraitPipeline"
 import { createMemoryAutomation } from "../../storage/memoryAutomation"
 import { openCatalogDatabase, openNovelDatabase } from "../../storage/novelDatabase"
+import { createNovelL1Extractor } from "../../storage/l1Extractor"
+import { createAutomaticPortraitUpdater } from "../../storage/automaticPortrait"
+import { createModel } from "../../create_model"
 
 const novelSlugOf = (config?: RunnableConfig): string => {
   const id = (config?.configurable as Record<string, unknown> | undefined)?.novelId
@@ -24,7 +27,19 @@ const databaseFor = (config?: RunnableConfig) => openNovelDatabase(novelSlugOf(c
 export const recordNovelMemoryEvent = tool(
   async ({ title, content, sourceType, sourceId, characterId, volumeId, chapterId }, config) => {
     const slug = novelSlugOf(config); const database = databaseFor(config)
-    try { return JSON.stringify(await createPortraitPipeline(database, createSiliconFlowEmbeddingClient()).recordEvent({ novelId: slug, title, content, sourceType, sourceId, characterId, volumeId, chapterId }), null, 2) } finally { database.close() }
+    try {
+      const automation = createMemoryAutomation(database, createSiliconFlowEmbeddingClient())
+      const captured = await automation.capture({ novelId: slug, title, content, sourceType, sourceId, characterId, volumeId, chapterId })
+      if (process.env.MEMORY_AUTO_L1 !== 'false') {
+        const extractor = createNovelL1Extractor(createModel(0.1))
+        const updatePortrait = createAutomaticPortraitUpdater(createModel(0.1), database, slug, createSiliconFlowEmbeddingClient())
+        for (let index = 0; index < 20 && automation.pending() > 0; index += 1) {
+          const result = await automation.processNext(extractor, async (_facts, factIds) => { await updatePortrait(factIds) })
+          if (result.status === 'empty' || result.status === 'failed') break
+        }
+      }
+      return JSON.stringify(captured, null, 2)
+    } finally { database.close() }
   },
   {
     name: "record_novel_memory_event",

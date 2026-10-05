@@ -9,4 +9,5 @@ export const api = {
   getNovel: (id) => request(`/api/novels/${id}`),
   getChapterText: (id, stage = 'draft') => request(`/api/chapters/${id}/text?stage=${stage}`),
   saveChapterText: (id, text, stage = 'draft') => request(`/api/chapters/${id}/text?stage=${stage}`, { method: 'PUT', body: JSON.stringify({ text }) }),
+  listPortraits: (novelId) => request(`/api/novels/${novelId}/portraits`),
 };

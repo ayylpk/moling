@@ -61,5 +61,6 @@ export const createNovelL1Extractor = (model: L1Model) => async (event: L0Event)
     volumeId: event.volumeId,
     chapterId: event.chapterId,
     confidence: candidate.confidence,
+    metadata: { ...(event.metadata ?? {}), category: candidate.category, extractor: 'novel-l1' },
   }))
 }

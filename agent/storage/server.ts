@@ -54,6 +54,13 @@ const server = Bun.serve({
           }
         } finally { database.close() }
       }
+      if (parts[0] === 'api' && parts[1] === 'novels' && parts[2] && parts[3] === 'portraits' && request.method === 'GET') {
+        const novel = catalogNovel(Number(parts[2])); if (!novel) return bad('小说不存在', 404)
+        const database = openNovelDatabase(novel.slug)
+        try {
+          return json(database.query(`SELECT p.*, c.name AS character_name FROM character_portraits p LEFT JOIN characters c ON c.id = p.character_id WHERE p.version = (SELECT max(p2.version) FROM character_portraits p2 WHERE p2.novel_id = p.novel_id AND p2.character_id = p.character_id) ORDER BY p.character_id`).all())
+        } finally { database.close() }
+      }
       return bad('接口不存在', 404)
     } catch (error) { return bad(error instanceof Error ? error.message : '服务器错误', 500) }
   },
