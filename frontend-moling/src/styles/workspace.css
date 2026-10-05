@@ -121,7 +121,11 @@
    ============================================================ */
 .wsc {
   position: relative;
-  overflow: hidden;
+  /* 竖向要能滚：六盏灯加案心实际需要约 580px，矮视口下如果没有出路，
+     最下面那盏灯会被裁掉 —— 看板少一盏，作者就少看一盏进度。
+     横向仍裁，案底 watermark 才不会外溢。 */
+  overflow-x: hidden;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   min-height: 100%;
@@ -157,10 +161,13 @@
   position: relative;
   z-index: 1;
   flex: 1;
-  min-height: 440px;
+  /* 侧列竖排两盏灯（每盏约 110px + 22px 间隙 ≈ 242px）比案心 184px 高，
+     1.2fr 的中行必须装得下它才不会被挤变形。原来 440px 只能分到约 148px 给中行，
+     于是下排那盏灯被 .wsc 的 overflow:hidden 裁掉 —— 少一盏灯，看板就说不清进度。 */
+  min-height: 580px;
   display: grid;
   grid-template-columns: 1fr 1.35fr 1fr;
-  grid-template-rows: 1fr 1.2fr 1fr;
+  grid-template-rows: auto 1fr auto;
   align-items: center;
   justify-items: center;
   gap: 20px;

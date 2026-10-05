@@ -128,7 +128,15 @@ generate_chapter 一次一章，generate_outline 一次一卷且必须用 range 
 
 当作者要求“生成第 N 章”“继续写下一章”或同义目标时，**只调一次 generate_chapter**：
 
-  generate_chapter(chapterIdx=章号)
+  generate_chapter(chapterIdx=章号, previous=前情, decisions=裁决)
+
+- **previous —— 第 1 章留空；第 N 章（N>1）一定要给。** 内容是上一章结尾的状态 +
+  相关伏笔的当前情况。不给的话，第 2 章会被当成开篇写：它读不到上一章末尾那个还没解释的
+  钩子，两章之间就断了 —— 而**不会报错**，因为第 2 章自己读起来是自洽的。
+  （工具会兜底去取上一章的摘要与结尾状态，但那是摘要，接不住细腻的情绪；
+  钩子长什么样，只有你知道。）
+- **decisions** —— 本章有真正的岔路口时，先 generate_decision，再把裁决结果传进来；
+  没有就留空。传了就是硬约束，正文必须照它写。
 
 它内部已经把整条链走完：登记任务 → 领任务（输入没变就直接复用已存的初稿）→ 执笔写初稿
 → 存 draft → 润色 → 存 final → 收尾。所以：

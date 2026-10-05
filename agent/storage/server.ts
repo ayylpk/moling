@@ -5,7 +5,7 @@ import { createWorldRuntime, type WorldInput } from '../SAgent/worldRuntime'
 import { createCharacterRuntime, type CharacterInput, type CharacterPatch } from '../SAgent/characterRuntime'
 import { createLocationRuntime, type LocationInput } from '../SAgent/locationRuntime'
 import { createOutlineRuntime, type AnchorInput, type VolumeOutlineInput } from '../SAgent/outlineRuntime'
-import { createChapterRuntime, type ChapterOutlinePatch, type TextStage } from '../SAgent/chapterRuntime'
+import { createChapterRuntime, type ChapterOutlineInput, type ChapterOutlinePatch, type TextStage } from '../SAgent/chapterRuntime'
 import {
   rememberChapterOutline,
   rememberChapterText,
@@ -13,6 +13,7 @@ import {
   rememberVolumeOutline,
   rememberWorld,
   saveCharacterWithMemory,
+  saveChapterOutlinesWithMemory,
   saveLocationWithMemory,
 } from './novelEffects'
 import { createSAgent } from '../SAgent'
@@ -51,7 +52,23 @@ type ChapterBody = {
   volume_id?: number; volume_no?: number; index?: number; title?: string
   goal?: string; conflict?: string; hook?: string; emotion?: string; summary?: string
   place?: string; characters?: string[]; word_count_target?: number
+  /** 批量：一次落一整卷。与工具层 save_chapter_outline 的入参一致 */
+  chapters?: ChapterBody[]
 }
+
+/** 请求体（snake，库与前端在说这个）→ runtime 入参（camel）。字段名在这里对齐一次。 */
+const toChapterInput = (body: ChapterBody): ChapterOutlineInput => ({
+  index: Number(body.index),
+  title: String(body.title ?? ''),
+  goal: body.goal,
+  conflict: body.conflict,
+  hook: body.hook,
+  emotion: body.emotion,
+  summary: body.summary,
+  place: body.place,
+  characters: body.characters,
+  wordCountTarget: body.word_count_target,
+})
 
 const server = Bun.serve({
   port: 3000,
@@ -279,24 +296,19 @@ const server = Bun.serve({
       /* ==================== 章纲（新增 / 修改） ==================== */
       if (parts[0] === 'api' && parts[1] === 'novels' && parts[2] && parts[3] === 'chapters' && request.method === 'POST') {
         const body = await request.json() as ChapterBody
+        // 入参与工具层 save_chapter_outline 对齐：传 chapters 数组。
+        // 传一条 = 单章落库/重跑；传一整卷 = 一次落完。逐条提交，某条失败不影响其余。
+        // （此前只认单条字段，传数组会被**静默忽略**——收了请求、什么都没落，也不报错。）
+        const drafts = Array.isArray(body.chapters) && body.chapters.length > 0 ? body.chapters : [body]
         return withNovelDb(parts[2], (novel, database) => {
           const runtime = createChapterRuntime(database)
           const volumeId = body.volume_id ?? (body.volume_no === undefined ? undefined : runtime.getVolumeByNo(Number(body.volume_no))?.id)
           if (volumeId === undefined) return bad('缺少 volume_id（或 volume_no），或该卷不存在')
-          const saved = runtime.saveChapterOutline(volumeId, {
-            index: Number(body.index),
-            title: String(body.title ?? ''),
-            goal: body.goal,
-            conflict: body.conflict,
-            hook: body.hook,
-            emotion: body.emotion,
-            summary: body.summary,
-            place: body.place,
-            characters: body.characters,
-            wordCountTarget: body.word_count_target,
-          })
-          rememberChapterOutline(novel.id, saved.chapter, volumeId)
-          return json(saved, 201)
+          const volume = runtime.listVolumes().find((item) => item.id === volumeId)
+          if (!volume) return bad('该卷不存在')
+          const report = saveChapterOutlinesWithMemory(database, novel.id, volume.no, drafts.map(toChapterInput))
+          // 一条都没落成 = 请求本身有问题；部分落成仍算成功，失败的那几条在报告里
+          return json(report, report.saved.length === 0 ? 400 : 201)
         })
       }
 

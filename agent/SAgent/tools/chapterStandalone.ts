@@ -47,6 +47,38 @@ const polisherPrompt = (novel: { title: string; style: string }, text: string, r
 小说：《${novel.title}》；文风：${novel.style}
 正文：\n${text}${retry ? '\n\n★ 注意：你上一次一个字都没改，这不合格。这一遍必须真的动 —— 上面那几类机器味最重的地方，就是你要动的地方。' : ''}`
 
+/**
+ * 前情：调用方给了就用它；没给且不是第一章，就从库里取上一章的摘要与结尾状态。
+ *
+ * ── 为什么要有这个兜底 ──
+ * 中心 Agent 的编排说明里写了「只调一次 generate_chapter(chapterIdx=章号)」，
+ * previous 是个可选参数，于是常常不传。而 writerPrompt 里写的是
+ * `previous || '这是开篇，没有前情。'` —— 于是第 2 章被当成开篇写：
+ * 它读不到第 1 章末尾那个还没解释的钩子，衔接就断了。
+ *
+ * 而且**不会报错**。第 2 章本身自洽（章纲说要找实物证据，它就去翻抽屉），
+ * 只是和第 1 章对不上。校验的人往往只逐章看，看不出两章之间少了东西。
+ *
+ * 兜底只能给到摘要和结尾状态，够接钩子、不够接细腻的情绪。
+ * 所以 skill 里仍然要求中心 Agent 自己写 —— 两层都留着。
+ */
+const resolvePrevious = (
+  runtime: ReturnType<typeof createChapterRuntime>,
+  chapterIdx: number,
+  given?: string,
+): string => {
+  if (given?.trim()) return given.trim()
+  if (chapterIdx <= 1) return ''
+  const prior = runtime.getText(chapterIdx - 1, 'final') ?? runtime.getText(chapterIdx - 1, 'draft')
+  if (!prior) return ''
+  return [
+    prior.summary ? `上一章（第 ${chapterIdx - 1} 章）发生了什么：${prior.summary}` : '',
+    prior.endsWith ? `上一章结束时的状态：${prior.endsWith}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
 const novelContext = (database: ReturnType<typeof openNovelDatabase>): string => {
   const world = database.query('SELECT name, premise, rules, terms, forbidden FROM worlds ORDER BY version DESC LIMIT 1').get()
   const characters = database.query('SELECT id, name, role, voice, want, need FROM characters ORDER BY id').all()
@@ -65,16 +97,20 @@ export const generateChapterTool = tool(
     const chapter = runtime.getChapter(chapterIdx)
     if (!chapter) { database.close(); throw new Error(`找不到第 ${chapterIdx} 章章纲`) }
     const context = novelContext(database)
+    // 前情：调用方给了就用它；没给且不是第一章，就从库里取上一章的摘要与结尾状态。
+    // 不兜这个底，第 2 章会被当成开篇写 —— 它读不到第 1 章末尾的钩子，衔接就断了，
+    // 而且不会报错，只会写出一章自成体系却接不上的正文。
+    const previousText = resolvePrevious(runtime, chapterIdx, previous)
     const writer = createModel(0.7, 300_000, false, 8192)
     const polisher = createModel(0.25, 180_000, false, 8192)
     const workflow = createChapterWorkflow({
-      plan: async (input) => { runtime.planTask('chapter', String(input.chapterIdx), JSON.stringify({ chapter, previous, decisions })) },
+      plan: async (input) => { runtime.planTask('chapter', String(input.chapterIdx), JSON.stringify({ chapter, previous: previousText, decisions })) },
       claim: async (input) => {
-        const task = runtime.claimTask('chapter', String(input.chapterIdx), JSON.stringify({ chapter, previous, decisions }))
+        const task = runtime.claimTask('chapter', String(input.chapterIdx), JSON.stringify({ chapter, previous: previousText, decisions }))
         return { action: task.action, taskId: task.taskId }
       },
       write: async (): Promise<ChapterDraft> => {
-        const value = jsonResponse(await writer.invoke(writerPrompt(novel, chapter, previous ?? '', decisions ?? '', context)))
+        const value = jsonResponse(await writer.invoke(writerPrompt(novel, chapter, previousText, decisions ?? '', context)))
         if (typeof value.text !== 'string' || !value.text.trim()) throw new Error('执笔 Agent 返回空正文')
         return { text: value.text, summary: typeof value.summary === 'string' ? value.summary : '', endsWith: typeof value.endsWith === 'string' ? value.endsWith : '' }
       },
