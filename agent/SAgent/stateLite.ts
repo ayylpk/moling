@@ -8,6 +8,9 @@ export const NovelState = Annotation.Root({
   messages: MessagesAnnotation.spec.messages,
   novelId: Annotation<number | null>,
   slug: Annotation<string | null>,
+  title: Annotation<string | null>,
+  genre: Annotation<string | null>,
+  style: Annotation<string | null>,
   phase: Annotation<Phase>,
   currentVolumeNo: Annotation<number>,
   currentChapterIdx: Annotation<number>,
@@ -25,6 +28,10 @@ export const NovelState = Annotation.Root({
 export type NovelStateValue = {
   novelId: number | null
   slug: string | null
+  /** 书名 / 题材 / 文风 —— 从 catalog 现取，随状态快照注入（"读小说元数据"这一步因此不必单独调工具） */
+  title: string | null
+  genre: string | null
+  style: string | null
   phase: Phase
   currentVolumeNo: number
   currentChapterIdx: number
@@ -51,6 +58,9 @@ export type NovelStateValue = {
 export const INITIAL_NOVEL_STATE: NovelStateValue = {
   novelId: null,
   slug: null,
+  title: null,
+  genre: null,
+  style: null,
   phase: 'init',
   currentVolumeNo: 1,
   currentChapterIdx: 1,
@@ -67,7 +77,11 @@ export const INITIAL_NOVEL_STATE: NovelStateValue = {
 
 export const deriveNovelState = (novelId: number): Omit<NovelStateValue, 'novelId' | 'slug'> => {
   const catalog = openCatalogDatabase()
-  const novel = catalog.query('SELECT slug FROM novels WHERE id = ?').get(novelId) as { slug: string } | null
+  // 书名 / 题材 / 文风顺路取回来：createSAgent 的"读小说元数据"这一步就靠它，
+  // 不然中心 Agent 连自己在写哪本书都要额外开一次连接
+  const novel = catalog.query('SELECT slug, title, genre, style FROM novels WHERE id = ?').get(novelId) as
+    | { slug: string; title: string; genre: string; style: string }
+    | null
   catalog.close()
   if (!novel) throw new Error(`小说不存在：novelId=${novelId}`)
   const database = openNovelDatabase(novel.slug)
@@ -83,6 +97,9 @@ export const deriveNovelState = (novelId: number): Omit<NovelStateValue, 'novelI
     const phase: Phase = world === null ? 'init' : volumes.length === 0 ? 'world' : chapters.length === 0 ? 'outline' : finalized.length > 0 ? 'polish' : 'prose'
     const written = finalized.length > 0 ? finalized : drafted
     return {
+      title: novel.title,
+      genre: novel.genre,
+      style: novel.style,
       phase,
       currentVolumeNo: volumes.length || 1,
       currentChapterIdx: (written.at(-1)?.idx ?? 0) + 1,
@@ -103,6 +120,7 @@ export function renderStateBlock(state: Partial<NovelStateValue>): string {
   const list = (value: unknown): unknown[] => Array.isArray(value) ? value : []
   return [
     '=== 当前状态（交给你的工具都基于它；每轮刷新）===',
+    `书目：《${state.title ?? '（未知）'}》｜题材：${state.genre || '未填'}｜文风：${state.style || '未填'}`,
     `阶段：${state.phase ?? '未知'}`,
     `进度：第 ${state.currentVolumeNo ?? 1} 卷｜下一章写第 ${state.currentChapterIdx ?? 1} 章`,
     `世界观：${state.worldId ? `id=${state.worldId} version=${state.worldVersion}` : '未建立'}`,
