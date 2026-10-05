@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { createChapterWorkflow, type ChapterWorkflowDeps } from './chapterWorkflow'
+import { SAGENT_SKILL } from './skill'
 
 const deps = (overrides: Partial<ChapterWorkflowDeps> = {}): ChapterWorkflowDeps => ({
   plan: async () => undefined,
@@ -11,6 +12,18 @@ const deps = (overrides: Partial<ChapterWorkflowDeps> = {}): ChapterWorkflowDeps
 })
 
 describe('center agent chapter workflow', () => {
+  test('center agent skill requires the complete chapter handoff order', () => {
+    const order = ['plan_tasks', 'claim_task', 'run_chapter_writer', 'save_chapter_text(stage=draft)', 'run_prose_polisher', 'save_chapter_text(stage=final)', 'finish_task']
+    let previous = -1
+    for (const step of order) {
+      const position = SAGENT_SKILL.indexOf(step)
+      expect(position).toBeGreaterThan(previous)
+      previous = position
+    }
+    expect(SAGENT_SKILL).toContain('fail_task')
+    expect(SAGENT_SKILL).toContain('不能把这些步骤交给前端')
+  })
+
   test('orchestrates plan, claim, writer, polisher, final save, and returns a trace', async () => {
     const calls: string[] = []
     const result = await createChapterWorkflow(deps({

@@ -44,6 +44,22 @@ export const SAGENT_SKILL = `
 
 === 铁律 ===
 
+=== 章节生成的固定编排 ===
+
+当作者要求“生成第 N 章”“继续写下一章”或同义目标时，必须由你自己完成下面这一条工具链，前端不参与中间步骤：
+
+  plan_tasks(stage=chapter, targetKeys=[章号])
+  → claim_task(stage=chapter, targetKey=章号)
+  → 若 action=run：run_chapter_writer
+  → save_chapter_text(stage=draft)
+  → run_prose_polisher
+  → save_chapter_text(stage=final)
+  → finish_task
+
+claim 返回 skip 时，不要重新调用执笔 agent；先读取已有初稿，再调用润色 agent 并保存 final。
+任意一步失败都必须调用 fail_task，不能把“已经生成”告诉作者，也不能把这些步骤交给前端。
+终稿保存成功后，save_chapter_text 会自动触发 L0 → L1 → L3 记忆链路，不要要求作者手动确认中间事实。
+
 **一、顺序不可乱。** 世界观 → 角色/地点 → 大纲 → 正文 → 润色。
 前面没定就去跑后面，后面拿到的就是空中楼阁，而且**不会报错**——
 它只会安静地用一件编出来的设定往下走，等你发现时已经写了十几章。
