@@ -2,7 +2,8 @@ import { openCatalogDatabase, openNovelDatabase } from './novelDatabase'
 import { createMemoryStore, type MemoryRecord } from './memoryStore'
 import { createSiliconFlowEmbeddingClient } from './embedding'
 
-type Novel = { id: number; slug: string; title: string; genre: string; style: string; status: string; created_at: string; updated_at: string }
+type Novel = { id: number; slug: string; title: string; genre: string; style: string; description: string; logline: string; target_words: number; themes: string; status: string; created_at: string; updated_at: string }
+type NovelCreateBody = Partial<Omit<Novel, 'id' | 'created_at' | 'updated_at'>> & { themes?: string[] | string; target_words?: number }
 const json = (body: unknown, status = 200): Response => Response.json(body, { status, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type', 'Access-Control-Allow-Methods': 'GET,POST,PUT,OPTIONS' } })
 const bad = (message: string, status = 400) => json({ message }, status)
 const catalogNovel = (id: number): Novel | null => { const database = openCatalogDatabase(); try { return database.query('SELECT * FROM novels WHERE id = ?').get(id) as Novel | null } finally { database.close() } }
@@ -19,10 +20,25 @@ const server = Bun.serve({
       if (url.pathname === '/api/health') return json({ ok: true, storage: 'catalog + per-novel sqlite' })
       if (url.pathname === '/api/novels' && request.method === 'GET') return json(listNovels())
       if (url.pathname === '/api/novels' && request.method === 'POST') {
-        const body = await request.json() as Partial<Novel>
+        const body = await request.json() as NovelCreateBody
         if (!body.slug || !body.title || !/^[a-z0-9][a-z0-9-]{0,47}$/.test(body.slug)) return bad('slug 必须是小写字母、数字或连字符')
+        const targetWords = body.target_words ?? 0
+        if (!Number.isInteger(targetWords) || targetWords < 0) return bad('target_words 必须是非负整数')
+        let themes = '[]'
+        if (body.themes !== undefined) {
+          if (Array.isArray(body.themes)) {
+            if (!body.themes.every((theme) => typeof theme === 'string')) return bad('themes 必须是字符串数组')
+            themes = JSON.stringify(body.themes)
+          } else {
+            try {
+              const parsed = JSON.parse(body.themes)
+              if (!Array.isArray(parsed) || !parsed.every((theme) => typeof theme === 'string')) return bad('themes 必须是字符串数组')
+              themes = JSON.stringify(parsed)
+            } catch { return bad('themes 必须是合法 JSON 数组') }
+          }
+        }
         const catalog = openCatalogDatabase()
-        try { const result = catalog.query('INSERT INTO novels (slug, title, genre, style, status) VALUES (?, ?, ?, ?, ?)').run(body.slug, body.title, body.genre ?? '', body.style ?? '', body.status ?? 'draft'); const novel = catalog.query('SELECT * FROM novels WHERE id = ?').get(Number(result.lastInsertRowid)) as Novel; openNovelDatabase(novel.slug).close(); return json(novel, 201) } finally { catalog.close() }
+        try { const result = catalog.query('INSERT INTO novels (slug, title, genre, style, description, logline, target_words, themes, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(body.slug, body.title, body.genre ?? '', body.style ?? '', body.description ?? '', body.logline ?? '', targetWords, themes, body.status ?? 'draft'); const novel = catalog.query('SELECT * FROM novels WHERE id = ?').get(Number(result.lastInsertRowid)) as Novel; openNovelDatabase(novel.slug).close(); return json(novel, 201) } finally { catalog.close() }
       }
       if (parts[0] === 'api' && parts[1] === 'novels' && parts[2] && parts[3] === 'chapters' && request.method === 'GET') {
         const novel = catalogNovel(Number(parts[2])); if (!novel) return bad('小说不存在', 404); const database = openNovelDatabase(novel.slug)

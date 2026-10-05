@@ -2,6 +2,8 @@
 
 每部小说的 `resources/novels/<slug>/novel.sqlite` 内包含完整的 L0/L1/L3 小说记忆系统，不引入独立数据库服务。
 
+小说目录库 `resources/catalog.sqlite` 只保存小说级元数据：标题、题材、文风、简介、logline、目标字数和主题 JSON 数组；完整世界观仍保存在对应小说库的 `worlds` 表中。
+
 ## 当前能力
 
 - `L0` 保存章节事件、Agent 对话等原始记录，保留原文，不把推测直接升级为事实。
@@ -35,6 +37,19 @@ L1 提取器参考腾讯项目的质量过滤、场景/事实结构化输出和�
 ## HTTP 接口
 
 `GET /api/novels/:id/portraits` 只返回每个角色的最新 L3 动态画像，包含标签、版本和依据事实 ID，供前端角色画像页展示。
+
+创建小说时可传入 `description`、`logline`、`target_words` 和 `themes`：
+
+```json
+{
+  "slug": "mist-spirit",
+  "title": "墨灵",
+  "description": "一名记录万物的修行者卷入旧世界的崩塌。",
+  "logline": "当记忆开始反噬现实，她必须在遗忘前写完自己的命运。",
+  "target_words": 300000,
+  "themes": ["成长", "东方幻想"]
+}
+```
 
 ```text
 POST /api/novels/:novelId/memories

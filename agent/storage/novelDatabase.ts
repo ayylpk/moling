@@ -7,7 +7,7 @@ const catalogPath = path.join(resourcesDir, 'catalog.sqlite')
 const novelsDir = path.join(resourcesDir, 'novels')
 
 export const NOVEL_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,47}$/
-const CATALOG_SCHEMA = `CREATE TABLE IF NOT EXISTS novels (id INTEGER PRIMARY KEY AUTOINCREMENT, slug TEXT NOT NULL UNIQUE, title TEXT NOT NULL, genre TEXT NOT NULL DEFAULT '', style TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','writing','paused','done')), created_at TEXT NOT NULL DEFAULT(datetime('now','localtime')), updated_at TEXT NOT NULL DEFAULT(datetime('now','localtime')))`
+const CATALOG_SCHEMA = `CREATE TABLE IF NOT EXISTS novels (id INTEGER PRIMARY KEY AUTOINCREMENT, slug TEXT NOT NULL UNIQUE, title TEXT NOT NULL, genre TEXT NOT NULL DEFAULT '', style TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '', logline TEXT NOT NULL DEFAULT '', target_words INTEGER NOT NULL DEFAULT 0, themes TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(themes)), status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','writing','paused','done')), created_at TEXT NOT NULL DEFAULT(datetime('now','localtime')), updated_at TEXT NOT NULL DEFAULT(datetime('now','localtime')))`
 const NOVEL_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS worlds (id INTEGER PRIMARY KEY AUTOINCREMENT, version INTEGER NOT NULL UNIQUE, name TEXT NOT NULL, premise TEXT NOT NULL DEFAULT '', rules TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(rules)), factions TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(factions)), places TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(places)), terms TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(terms)), forbidden TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(forbidden)), created_at TEXT NOT NULL DEFAULT(datetime('now','localtime')), updated_at TEXT NOT NULL DEFAULT(datetime('now','localtime')))` ,
   `CREATE TABLE IF NOT EXISTS characters (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, role TEXT NOT NULL CHECK(role IN ('protagonist','antagonist','support')), immutable TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(immutable)), voice TEXT NOT NULL DEFAULT '', want TEXT NOT NULL DEFAULT '', cost TEXT NOT NULL DEFAULT '', need TEXT NOT NULL DEFAULT '', secret TEXT NOT NULL DEFAULT '', reveal TEXT NOT NULL DEFAULT '', line TEXT NOT NULL DEFAULT '', flaw TEXT NOT NULL DEFAULT '', arc_start TEXT NOT NULL DEFAULT '', arc_end TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'alive' CHECK(status IN ('alive','dead','disabled')), source TEXT NOT NULL DEFAULT 'agent' CHECK(source IN ('agent','hand')), created_at TEXT NOT NULL DEFAULT(datetime('now','localtime')), updated_at TEXT NOT NULL DEFAULT(datetime('now','localtime')))` ,
@@ -27,7 +27,24 @@ const NOVEL_SCHEMA = [
 ]
 
 export const ensureStorageRoot = (): void => { fs.mkdirSync(novelsDir, { recursive: true }) }
-export const openCatalogDatabase = (): Database => { ensureStorageRoot(); const database = new Database(catalogPath, { create: true }); database.run('PRAGMA foreign_keys = ON'); database.run(CATALOG_SCHEMA); return database }
+const migrateCatalogSchema = (database: Database): void => {
+  const columns = database.query('PRAGMA table_info(novels)').all() as Array<{ name: string }>
+  const additions: Array<[string, string]> = [
+    ['description', "TEXT NOT NULL DEFAULT ''"],
+    ['logline', "TEXT NOT NULL DEFAULT ''"],
+    ['target_words', 'INTEGER NOT NULL DEFAULT 0'],
+    ['themes', "TEXT NOT NULL DEFAULT '[]'"],
+  ]
+  for (const [name, definition] of additions) {
+    if (!columns.some((column) => column.name === name)) database.run(`ALTER TABLE novels ADD COLUMN ${name} ${definition}`)
+  }
+}
+export const initializeCatalogSchema = (database: Database): void => {
+  database.run('PRAGMA foreign_keys = ON')
+  database.run(CATALOG_SCHEMA)
+  migrateCatalogSchema(database)
+}
+export const openCatalogDatabase = (): Database => { ensureStorageRoot(); const database = new Database(catalogPath, { create: true }); initializeCatalogSchema(database); return database }
 const migrateMemorySchema = (database: Database): void => {
   const columns = database.query('PRAGMA table_info(memory_items)').all() as Array<{ name: string }>
   if (!columns.some((column) => column.name === 'stage')) {
