@@ -3,7 +3,9 @@
  *
  * ── 它是什么 ──
  * 唯一与作者对话的角色，也是唯一的编排者。
- * 手上两组工具：7 个子 agent（只生成）+ 数据库读写。
+ * 手上是**落库/读取 + 记忆/画像 + 正文生成**这几组工具（见 ./tools/cleanIndex.ts 的那份清单）；
+ * 让角色/地点/大纲/裁决 agent 真正产出内容的「调用工具」尚未接入，
+ * 所以它现在只能把作者给的内容落库，不能自己生成那几类。
  * 它自己不写一个字设定、大纲、正文——只决定这一步该谁做。
  *
  * ── 记忆与上下文（用户 2026-10-03 明确的四条要求，逐条落在这里）──
@@ -37,7 +39,7 @@ import { createModel } from "../create_model"
 import { SAGENT_PROMPT } from "./prompt"
 import { COMPACT_PROMPT } from "./compact"
 import { NovelState, novelStateSync } from "./stateLite"
-import { memoryTools, portraitTools, generateChapterTool, worldTools } from "./tools/cleanIndex"
+import { memoryTools, portraitTools, generateChapterTool, worldTools, characterTools, locationTools, outlineTools, chapterOutlineTools, decisionTools } from "./tools/cleanIndex"
 
 /* ==================== 可配常量 ==================== */
 
@@ -189,7 +191,20 @@ export function createSAgent(model: BaseChatModel = createModel(0.3)) {
   return createAgent({
     model,
     systemPrompt: SAGENT_PROMPT,
-    tools: [...worldTools, ...memoryTools, ...portraitTools, generateChapterTool],
+    tools: [
+      // 世界观 + per-novel 库的落库/读取（角色 / 地点 / 大纲卷 / 章纲 / 裁决）
+      ...worldTools,
+      ...characterTools,
+      ...locationTools,
+      ...outlineTools,
+      ...chapterOutlineTools,
+      ...decisionTools,
+      // 记忆与画像
+      ...memoryTools,
+      ...portraitTools,
+      // 正文：一步到底（执笔 + 润色 + 落库）
+      generateChapterTool,
+    ],
     // 状态：小说创作该有的东西（阶段 / 进度 / 场上实体 / 待办 / 任务）
     // 它是**缓存**——真身在数据库，每次调模型前由 novelStateSync 重新推导，见 ./stateLite.ts
     stateSchema: NovelState,
