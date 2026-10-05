@@ -38,10 +38,11 @@ export default function Cast() {
   const [portraits, setPortraits] = useState([]);
 
   useEffect(() => {
+    if (!novel?.id) return undefined;
     let active = true;
     api.listPortraits(novel.id).then((items) => { if (active && Array.isArray(items)) setPortraits(items); }).catch(() => {});
     return () => { active = false; };
-  }, [novel.id]);
+  }, [novel?.id]);
 
   const cards = portraits.length > 0 ? portraits.map((portrait) => ({
     name: portrait.character_name || `角色 ${portrait.character_id}`,

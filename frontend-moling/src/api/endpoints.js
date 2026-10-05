@@ -2,6 +2,15 @@
  * 接口总表 —— 只登记后端「已有」的路由，下一期取数时改这里，页面不写路径。
  * 挂 vite proxy（/api → :3000）后全部相对路径；DESIGN.md 第七节：禁绝对地址。
  *
+ * ⚠️ 本项目 :3000 上有两个互斥后端，本文件登记的是**较全的那个**：
+ *   agent/my-app/src/index.ts（Hono）—— worlds / generation / characters /
+ *     locations / volumes / outline / chapters / decisions
+ * 而前端页面实际调用的是 `src/api/client.js`，它对着另一个后端：
+ *   agent/storage/server.ts（根 `npm run api:dev` 起的就是它）—— novels /
+ *     chapters / 正文 / memories / portraits
+ * 两者 URL 形态不同（例：正文 my-app = /api/novels/:id/chapters/:cid/texts，
+ * storage = /api/chapters/:cid/text?stage=）。要换基座，先改 client.js。
+ *
  * 后端入口：agent/my-app/src/index.ts（Hono，类比 Java 的 Servlet 注册层）
  * 类型契约：agent/db/types/{entity,dto,vo}.ts（DTO 进、VO 出，页面只该消费 VO 形状）
  */
