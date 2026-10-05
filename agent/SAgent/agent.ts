@@ -4,14 +4,14 @@
  * ── 它是什么 ──
  * 唯一与作者对话的角色，也是唯一的编排者。
  * 手上是**生成 + 落库/读取 + 记忆/画像**这几组工具（见 ./tools/cleanIndex.ts 的那份清单）。
- * 角色 / 地点 / 大纲的生成工具已挂上；世界观生成与角色裁决生成**尚未迁**。
+ * 五个生成工具都已挂上：世界观 / 角色 / 地点 / 大纲 / 裁决。
  * 注意分工：生成类工具**不写库**，落库是中心 Agent 自己的决定（generate_* → 判断 → save_*）。
  * 注意：**所有工具都是它的**，只是有的还没接上；不存在"属于子 agent 的工具"。
  * 它自己不写一个字设定、大纲、正文——只决定这一步该谁做。
  *
  * ── 记忆与上下文（用户 2026-10-03 明确的四条要求，逐条落在这里）──
  *
- * ① 工具平时返回「内容类型 + 全部内容」——见 ./tools/subagents.ts。
+ * ① 工具平时返回「内容类型 + 全部内容」——见 ./tools/context.ts 的 pack()。
  *
  * ② **一章生成完之后**才做概括压缩：把该章那些超长的工具结果
  *    （正文全文、润色全文）降级成「摘要 + 类型标记」。
@@ -40,7 +40,7 @@ import { createModel } from "../create_model"
 import { SAGENT_PROMPT } from "./prompt"
 import { COMPACT_PROMPT } from "./compact"
 import { NovelState, novelStateSync } from "./stateLite"
-import { memoryTools, portraitTools, generateChapterTool, worldTools, characterTools, locationTools, outlineTools, chapterOutlineTools, decisionTools, generateCharacter, generateLocation, generateOutline } from "./tools/cleanIndex"
+import { memoryTools, portraitTools, generateChapterTool, worldTools, characterTools, locationTools, outlineTools, chapterOutlineTools, decisionTools, generateWorld, generateCharacter, generateLocation, generateOutline, generateDecision } from "./tools/cleanIndex"
 
 /* ==================== 可配常量 ==================== */
 
@@ -194,9 +194,12 @@ export function createSAgent(model: BaseChatModel = createModel(0.3)) {
     systemPrompt: SAGENT_PROMPT,
     tools: [
       // 生成类：调子 agent 产出内容，**不写库**（草案回到中心，采纳与否由它判断）
+      // generate_world 排在第一位：它是整条链的起点，其余四个都以世界观为硬约束
+      generateWorld,
       generateCharacter,
       generateLocation,
       generateOutline,
+      generateDecision,
       // 正文：一步到底（执笔 + 润色 + 落库），内部自己管任务表，不另暴露调度工具
       generateChapterTool,
       // 落库 / 读取：当前小说的 per-novel 库
