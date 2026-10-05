@@ -36,8 +36,8 @@ import { RemoveMessage, ToolMessage, type BaseMessage } from "@langchain/core/me
 import { createModel } from "../create_model"
 import { SAGENT_PROMPT } from "./prompt"
 import { COMPACT_PROMPT } from "./compact"
-import { NovelState, novelStateSync } from "./state"
-import { subAgentTools, databaseTools, taskTools, memoryTools, portraitTools, generateChapterTool } from "./tools"
+import { NovelState, novelStateSync } from "./stateLite"
+import { memoryTools, portraitTools, generateChapterTool } from "./tools/cleanIndex"
 
 /* ==================== 可配常量 ==================== */
 
@@ -189,7 +189,7 @@ export function createSAgent(model: BaseChatModel = createModel(0.3)) {
   return createAgent({
     model,
     systemPrompt: SAGENT_PROMPT,
-    tools: [...subAgentTools, ...databaseTools, ...taskTools, ...memoryTools, ...portraitTools, generateChapterTool],
+    tools: [...memoryTools, ...portraitTools, generateChapterTool],
     // 状态：小说创作该有的东西（阶段 / 进度 / 场上实体 / 待办 / 任务）
     // 它是**缓存**——真身在数据库，每次调模型前由 novelStateSync 重新推导，见 ./state.ts
     stateSchema: NovelState,
