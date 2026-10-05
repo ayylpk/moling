@@ -14,6 +14,8 @@
 - 每条记忆保留 `sourceType`、`sourceId`、`volumeId`、`chapterId`，便于 Agent 回溯证据。
 - 中心 Agent 通过 `search_novel_memory` 检索，通过 `remember_novel_memory` 保存确认后的世界观、角色、剧情和章节事实。
 - 中心 Agent 通过 `record_novel_memory_event` 写 L0、`record_novel_memory_fact` 写 L1、`update_character_portrait` 更新 L3。
+- `capture_novel_memory_event` 负责自动采集入口：写入 L0 后登记 `memory_jobs`，L1 提取失败会重试，达到上限后保留为 failed 任务，不影响原始记录。
+- 正式落库工具成功后会非阻塞地自动采集世界观、角色、地点、卷纲、章节正文和裁决到 L0；Embedding/队列异常不会回滚正式业务表。
 
 ## 三层数据流
 
@@ -27,6 +29,8 @@
 ```
 
 L3 更新必须携带 `basedOnFactIds`。Embedding 服务失败时不会丢失原始记录、事实或画像，只会将该条标记为待补向量，并继续使用 FTS5 检索。
+
+L1 提取器通过 `createMemoryAutomation(...).processNext(extractor)` 注入。提取器负责把 L0 转成带 `novelId` 和来源的候选事实；L3 不由队列自动覆盖，只由中心 Agent 审核后调用画像工具。
 
 ## HTTP 接口
 

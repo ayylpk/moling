@@ -29,6 +29,7 @@ import { getProgress, listTasks } from "../../my-app/src/service/taskService"
 import { recordDecision, listDecisionsByChapter, buildDecisionsText } from "../../my-app/src/service/actorDecisionService"
 import { getNovel } from "../../my-app/src/service/novelService"
 import type { TextStage } from "../../db/types"
+import { captureNovelEvent } from "../../storage/autoCapture"
 
 /* ==================== 辅助 ==================== */
 
@@ -51,6 +52,7 @@ export const saveWorld = tool(
   async (input, config) => {
     const novelId = novelIdOf(config)
     const world = createWorld({ novel_id: novelId, ...input } as Parameters<typeof createWorld>[0])
+    void captureNovelEvent(novelId, { title: `世界观:${world.name}`, content: JSON.stringify(world), sourceType: "world", sourceId: `world:${world.id}` }).catch(() => undefined)
     return pack(`世界观已落库｜world_id:${world.id}｜version:${world.version}`, {
       id: world.id,
       version: world.version,
@@ -92,6 +94,7 @@ export const saveCharacter = tool(
   async (input, config) => {
     const novelId = novelIdOf(config)
     const card = createCharacter({ novel_id: novelId, ...input } as Parameters<typeof createCharacter>[0])
+    void captureNovelEvent(novelId, { title: `角色:${card.name}`, content: JSON.stringify(card), sourceType: "character", sourceId: `character:${card.id}`, characterId: card.id }).catch(() => undefined)
     return pack(`角色已落库｜character_id:${card.id}`, {
       id: card.id,
       name: card.name,
@@ -127,6 +130,7 @@ export const saveLocation = tool(
   async (input, config) => {
     const novelId = novelIdOf(config)
     const loc = createLocation({ novel_id: novelId, ...input } as Parameters<typeof createLocation>[0])
+    void captureNovelEvent(novelId, { title: `地点:${loc.name}`, content: JSON.stringify(loc), sourceType: "location", sourceId: `location:${loc.id}` }).catch(() => undefined)
     return pack(`地点已落库｜location_id:${loc.id}`, { id: loc.id, name: loc.name })
   },
   {
@@ -175,6 +179,7 @@ export const saveVolumeOutlineTool = tool(
       },
       chapters: o.chapters,
     } as Parameters<typeof saveVolumeOutline>[0])
+    void captureNovelEvent(novelId, { title: `卷纲:${volume.name}`, content: JSON.stringify({ volume, outline }), sourceType: "volume_outline", sourceId: `volume:${(result as { volumeId?: number }).volumeId ?? volume.no}`, volumeId: (result as { volumeId?: number }).volumeId }).catch(() => undefined)
     return pack(`卷大纲已落库｜volume_id:${(result as { volumeId?: number }).volumeId ?? "?"}`, {
       volumeNo: volume.no,
       chapters: o.chapters.length,
@@ -216,6 +221,7 @@ export const saveChapterTextTool = tool(
       ends_with: endsWith,
       polish_report: polishReport,
     } as Parameters<typeof saveChapterText>[1])
+    void captureNovelEvent(novelId, { title: `第${chapterIdx}章正文`, content: `${summary ?? ""}\n${endsWith ?? ""}\n${body}`, sourceType: "chapter_text", sourceId: `chapter:${chapter.id}:${stage}`, chapterId: chapter.id }).catch(() => undefined)
     return pack(`正文已落库｜chapter_text_id:${(saved as { id?: number }).id ?? "?"}`, {
       chapterIdx,
       stage,
@@ -255,6 +261,7 @@ export const saveDecision = tool(
       custom_answer: customAnswer,
       prompt_hash: promptHash,
     } as Parameters<typeof recordDecision>[1])
+    void captureNovelEvent(novelId, { title: `第${chapterIdx}章裁决`, content: JSON.stringify({ characterName, choice, reason, line, customAnswer }), sourceType: "decision", sourceId: `decision:${chapter.id}:${promptHash ?? "latest"}`, chapterId: chapter.id }).catch(() => undefined)
     return pack(`裁决已落库`, saved)
   },
   {

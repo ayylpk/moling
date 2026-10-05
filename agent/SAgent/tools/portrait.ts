@@ -5,6 +5,7 @@ import * as z from "zod"
 
 import { createSiliconFlowEmbeddingClient } from "../../storage/embedding"
 import { createPortraitPipeline } from "../../storage/portraitPipeline"
+import { createMemoryAutomation } from "../../storage/memoryAutomation"
 import { openCatalogDatabase, openNovelDatabase } from "../../storage/novelDatabase"
 
 const novelSlugOf = (config?: RunnableConfig): string => {
@@ -57,4 +58,18 @@ export const updateCharacterPortrait = tool(
   },
 )
 
-export const portraitTools = [recordNovelMemoryEvent, recordNovelMemoryFact, updateCharacterPortrait]
+export const captureNovelMemoryEvent = tool(
+  async ({ title, content, sourceType, sourceId, characterId, volumeId, chapterId }, config) => {
+    const slug = novelSlugOf(config); const database = databaseFor(config)
+    try {
+      return JSON.stringify(await createMemoryAutomation(database, createSiliconFlowEmbeddingClient()).capture({ novelId: slug, title, content, sourceType, sourceId, characterId, volumeId, chapterId }), null, 2)
+    } finally { database.close() }
+  },
+  {
+    name: "capture_novel_memory_event",
+    description: "将世界观、角色、卷纲、章节或 Agent 决策作为 L0 原始事件自动登记，并加入待处理队列。后续由 L1 提取器生成候选事实；不会直接修改 L3 画像。",
+    schema: z.object({ title: z.string().min(1), content: z.string().min(1), sourceType: z.string().min(1), sourceId: z.string().min(1), characterId: z.number().int().positive().optional(), volumeId: z.number().int().positive().optional(), chapterId: z.number().int().positive().optional() }),
+  },
+)
+
+export const portraitTools = [captureNovelMemoryEvent, recordNovelMemoryEvent, recordNovelMemoryFact, updateCharacterPortrait]
