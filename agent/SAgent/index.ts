@@ -30,4 +30,4 @@ export {
   type NovelStateValue,
 } from "./stateLite"
 
-export { memoryTools, searchNovelMemory, rememberNovelMemory, portraitTools, captureNovelMemoryEvent, recordNovelMemoryEvent, recordNovelMemoryFact, updateCharacterPortrait, generateChapterTool } from "./tools/cleanIndex"
+export { memoryTools, searchNovelMemory, rememberNovelMemory, portraitTools, captureNovelMemoryEvent, recordNovelMemoryEvent, recordNovelMemoryFact, updateCharacterPortrait, generateChapterTool, worldTools, saveWorld, readWorld } from "./tools/cleanIndex"
