@@ -33,6 +33,10 @@ export const api = {
   createWorld: (novelId, world) => request(`/api/novels/${novelId}/worlds`, { method: 'POST', body: JSON.stringify(world) }),
   chat: (novelId, message, history) => request(`/api/novels/${novelId}/chat`, { method: 'POST', body: JSON.stringify({ message, history }) }),
 
+  /* ==================== 工作流灯位状态 ==================== */
+  /** 执笔画布七盏灯 + 案心：{ nodes: [...], hub: {...} }，全部由库里现算 */
+  workflow: (novelId) => request(`/api/novels/${novelId}/agents`),
+
   /* ==================== 章与正文 ==================== */
   /** 一本书的全部章节：id/idx/title/volume_id/goal/conflict/hook/emotion/summary/textStage */
   listChapters: (novelId) => request(`/api/novels/${novelId}/chapters`),

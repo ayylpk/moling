@@ -3,6 +3,7 @@ import { createMemoryStore, type MemoryRecord } from './memoryStore'
 import { createSiliconFlowEmbeddingClient } from './embedding'
 import { createWorldRuntime, type WorldInput } from '../SAgent/worldRuntime'
 import { createSAgent } from '../SAgent'
+import { readWorkflowStatus } from './workflowStatus'
 
 type Novel = { id: number; slug: string; title: string; genre: string; style: string; description: string; logline: string; target_words: number; themes: string; status: string; created_at: string; updated_at: string }
 type NovelCreateBody = Partial<Omit<Novel, 'id' | 'created_at' | 'updated_at'>> & { themes?: string[] | string; target_words?: number }
@@ -63,6 +64,11 @@ const server = Bun.serve({
         const messages = (result as { messages?: Array<{ getType?: () => string; content?: unknown }> }).messages ?? []
         const answer = [...messages].reverse().find((item) => item.getType?.() === 'ai' || typeof item.content === 'string')?.content
         return json({ message: typeof answer === 'string' ? answer : JSON.stringify(answer ?? '中心 Agent 暂无回复') })
+      }
+      if (parts[0] === 'api' && parts[1] === 'novels' && parts[2] && parts[3] === 'agents' && request.method === 'GET') {
+        const novel = catalogNovel(Number(parts[2])); if (!novel) return bad('小说不存在', 404)
+        const database = openNovelDatabase(novel.slug)
+        try { return json(readWorkflowStatus(database)) } finally { database.close() }
       }
       if (parts[0] === 'api' && parts[1] === 'novels' && parts[2] && parts[3] === 'chapters' && request.method === 'GET') {
         const novel = catalogNovel(Number(parts[2])); if (!novel) return bad('小说不存在', 404); const database = openNovelDatabase(novel.slug)

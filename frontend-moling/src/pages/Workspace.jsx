@@ -1,19 +1,24 @@
-import { useRef, useState } from 'react';
-import { AGENTS, HUB } from '../lib/workbenchData.js';
+import { useEffect, useRef, useState } from 'react';
+import { useWorkbench } from '../layout/WorkbenchLayout.jsx';
+import { api } from '../api/client.js';
 
 /**
  * 执笔 · 夜案画布。
  * 案心一盏「灵」，四周五盏手 + 一章务，环着摆成一案：
  *   上排 = 上游约束（世界观 / 大纲）  左 = 角色 / 场景
  *   右   = 章节任务 / 执笔            下 = 润色
- * 明暗即状态（亮在写 / 常已成 / 暗待命 / 沉折笔），
- * 悬停或键盘聚焦任一灯，翻出浮签：在读什么 · 本轮 token · 最近动静。
+ *
+ * **灯的脸色全部来自库**（`GET /api/novels/:id/agents`）：
+ * 五盏读 generation_tasks，执笔/润色读 chapter_texts 的初稿、定稿产物数；
+ * 案心由七盏归总。灯下留白就是"这一阶段还没开工"。
+ * 页面**不摆任何静态状态**——读不到就说读不到，不拿假数糊过去。
+ *
+ * 每 5 秒重取一次：Agent 是在后台干活，界面得跟着动。
  */
 
 const STATE_LABEL = { done: '已成', running: '在写', idle: '待命', failed: '折笔' };
 
-// AGENTS 顺序即上表：界 色 纲? —— 按 id 取位，防以后调数组顺序把拓扑搞乱
-const byId = Object.fromEntries(AGENTS.map((a) => [a.id, a]));
+// 灯位方位写死；按 id 取节点，不怕后端调整数组顺序
 const RING = {
   top: ['world', 'outline'],
   left: ['character', 'location'],
@@ -22,10 +27,37 @@ const RING = {
 };
 
 const BUBBLE_HALF = 152; // 浮签半宽，用来夹左右边距
+const POLL_MS = 5000;
 
 export default function Workspace() {
+  const { novel } = useWorkbench();
   const mapRef = useRef(null);
+  const [status, setStatus] = useState(null); // { nodes, hub }
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState('');
   const [bubble, setBubble] = useState(null); // { info, x, y, above }
+
+  useEffect(() => {
+    if (!novel?.id) {
+      setStatus(null);
+      setLoaded(true);
+      setError('');
+      return undefined;
+    }
+    let active = true;
+    const load = () => {
+      api.workflow(novel.id)
+        .then((result) => { if (active && result) { setStatus(result); setError(''); } })
+        .catch((cause) => { if (active) setError(cause.message || '读不到工作流状态'); })
+        .finally(() => { if (active) setLoaded(true); });
+    };
+    setLoaded(false);
+    load();
+    const timer = window.setInterval(load, POLL_MS);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [novel?.id]);
+
+  const byId = Object.fromEntries((status?.nodes ?? []).map((node) => [node.id, node]));
 
   /**
    * 浮签落点：以节点底边中点为准；节点已过案面 62% 高度就翻到头顶，
@@ -50,6 +82,33 @@ export default function Workspace() {
     onBlur: hideBubble,
   });
 
+  if (!novel) {
+    return (
+      <div className="wsc">
+        <span className="wsc__watermark" aria-hidden="true">灵</span>
+        <p className="wsc__caption">{loaded ? '先到书架建一本小说，案上才有灯。' : '正在读取书架……'}</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="wsc">
+        <span className="wsc__watermark" aria-hidden="true">灵</span>
+        <p className="wsc__caption">读不到工作流状态：{error}</p>
+      </div>
+    );
+  }
+
+  if (!status) {
+    return (
+      <div className="wsc">
+        <span className="wsc__watermark" aria-hidden="true">灵</span>
+        <p className="wsc__caption">正在读取工作流状态……</p>
+      </div>
+    );
+  }
+
   return (
     <div className="wsc">
       <span className="wsc__watermark" aria-hidden="true">灵</span>
@@ -70,10 +129,10 @@ export default function Workspace() {
           {RING.left.map((id) => <Lamp key={id} agent={byId[id]} bind={bind} />)}
         </div>
 
-        <button type="button" className={`wsc__hub is-${HUB.state}`} {...bind(HUB)}>
+        <button type="button" className={`wsc__hub is-${status.hub.state}`} {...bind({ ...status.hub, id: 'hub', name: '中心 Agent', mark: '灵' })}>
           <span className="wsc__hub-seal">灵</span>
           <span className="wsc__hub-name">中心 Agent</span>
-          <span className="wsc__hub-state"><i />{HUB.stateLabel}</span>
+          <span className="wsc__hub-state"><i />{STATE_LABEL[status.hub.state]}</span>
         </button>
 
         <div className="wsc__orbit wsc__orbit--side wsc__orbit--right">
@@ -100,18 +159,21 @@ export default function Workspace() {
 
 /** 一盏灯：楷记 + 名 + 状态点，脸色由 is-{state} 决定 */
 function Lamp({ agent, bind }) {
+  if (!agent) return null;
   return (
     <button type="button" className={`wsc__lamp is-${agent.state}`} {...bind(agent)}>
       <span className="wsc__lamp-mark">{agent.mark}</span>
       <span className="wsc__lamp-name">{agent.name}</span>
-      <span className="wsc__lamp-state"><i />{agent.stateLabel || STATE_LABEL[agent.state]}</span>
+      <span className="wsc__lamp-state"><i />{STATE_LABEL[agent.state]}</span>
     </button>
   );
 }
 
-/** 浮签：在读什么 / 本轮 token（带墨条）/ 最近动静 */
+/**
+ * 浮签：当前在做什么 / 统计 / 最近更新。
+ * 版式里原本还有一条"本轮 token"墨条 —— 库里没有这个数据源，已去掉，不摆假数。
+ */
 function Bubble({ info, x, y, above }) {
-  const label = info.stateLabel || STATE_LABEL[info.state];
   return (
     <div
       className={`wsc__bubble is-${info.state}`}
@@ -121,15 +183,11 @@ function Bubble({ info, x, y, above }) {
       <div className="wsc__bubble-head">
         <span className="wsc__bubble-mark">{info.mark}</span>
         <strong className="wsc__bubble-name">{info.name}</strong>
-        <span className="wsc__bubble-state">{label}</span>
+        <span className="wsc__bubble-state">{STATE_LABEL[info.state]}</span>
       </div>
-      <p className="wsc__bubble-row"><span>在读</span>{info.reading}</p>
-      <p className="wsc__bubble-row wsc__bubble-row--meter">
-        <span>本轮 token</span>
-        <em className="wsc__bubble-num">{info.tokens} <s>/ {info.cap}</s></em>
-        <i className="wsc__bubble-track"><b style={{ width: `${info.pct}%` }} /></i>
-      </p>
-      <p className="wsc__bubble-row"><span>最近</span>{info.last}</p>
+      <p className="wsc__bubble-row"><span>当前</span>{info.current || '没有在跑的任务'}</p>
+      <p className="wsc__bubble-row"><span>统计</span>{info.summary}</p>
+      <p className="wsc__bubble-row"><span>更新</span>{info.updated_at || '—'}</p>
     </div>
   );
 }
