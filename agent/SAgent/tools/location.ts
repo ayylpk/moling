@@ -1,8 +1,9 @@
 import { tool } from 'langchain'
 import * as z from 'zod'
 
+import { saveLocationWithMemory } from '../../storage/novelEffects'
 import { createLocationRuntime, type LocationInput } from '../locationRuntime'
-import { pack, rememberNovelEvent, withNovelDatabase } from './context'
+import { pack, withNovelDatabase } from './context'
 
 /**
  * 地点卡工具。
@@ -14,18 +15,7 @@ import { pack, rememberNovelEvent, withNovelDatabase } from './context'
 export const saveLocation = tool(
   async (input, config) =>
     withNovelDatabase(config, (database, novel) => {
-      const runtime = createLocationRuntime(database)
-      const { location, created } = runtime.create(input as LocationInput)
-
-      // 建好父地点之后回头补：之前挂不上来的子地点
-      const resolvedChildren = created ? runtime.resolvePendingChildren(location.name, location.id) : 0
-
-      rememberNovelEvent(novel.id, {
-        title: `地点:${location.name}`,
-        content: JSON.stringify(location),
-        sourceType: 'location',
-        sourceId: `location:${location.id}`,
-      })
+      const { location, created, resolvedChildren } = saveLocationWithMemory(database, novel.id, input as LocationInput)
 
       return pack(created ? `地点已落库｜location_id:${location.id}` : `地点已存在，未重复创建｜location_id:${location.id}`, {
         id: location.id,

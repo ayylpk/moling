@@ -2,7 +2,7 @@ import { tool } from 'langchain'
 import type { RunnableConfig } from '@langchain/core/runnables'
 import * as z from 'zod'
 import { createModel } from '../../create_model'
-import { captureNovelEvent } from '../../storage/autoCapture'
+import { rememberChapterText } from '../../storage/novelEffects'
 import { openCatalogDatabase, openNovelDatabase } from '../../storage/novelDatabase'
 import { createChapterRuntime } from '../chapterRuntime'
 import { createChapterWorkflow, type ChapterDraft, type ChapterPolish } from '../chapterWorkflow'
@@ -97,7 +97,9 @@ export const generateChapterTool = tool(
       },
       save: async (input) => {
         runtime.saveText(input.chapterIdx, { stage: input.stage, text: input.text, summary: input.summary, endsWith: input.endsWith, polishReport: input.polishReport })
-        if (input.stage === 'final') await captureNovelEvent(novelId, { title: `第${input.chapterIdx}章终稿`, content: `${input.summary ?? ''}\n${input.endsWith ?? ''}\n${input.text}`, sourceType: 'chapter_text', sourceId: `chapter:${chapter.id}:final`, chapterId: chapter.id })
+        // 记忆格式与 HTTP 手写终稿共用一份（见 storage/novelEffects 的 rememberChapterText）。
+        // 只有 final 会真的记；draft 是过程稿。不 await —— 记忆挂了不该让这一章判失败。
+        rememberChapterText(novelId, { chapterId: chapter.id, chapterIdx: input.chapterIdx, stage: input.stage, text: input.text, summary: input.summary, endsWith: input.endsWith })
       },
       finish: async (input) => { runtime.finishTask(input.taskId) },
       fail: async (input) => { if (input.taskId !== undefined) runtime.failTask(input.taskId, input.error) },

@@ -1,8 +1,9 @@
 import { tool } from 'langchain'
 import * as z from 'zod'
 
+import { saveChapterOutlinesWithMemory } from '../../storage/novelEffects'
 import { createChapterRuntime, type ChapterOutlineInput } from '../chapterRuntime'
-import { pack, rememberNovelEvent, withNovelDatabase } from './context'
+import { pack, withNovelDatabase } from './context'
 
 /**
  * 章纲工具 —— 一次可以落**一条**，也可以落**一整卷**。
@@ -17,50 +18,13 @@ import { pack, rememberNovelEvent, withNovelDatabase } from './context'
 export const saveChapterOutline = tool(
   async ({ volume_no, chapters }, config) =>
     withNovelDatabase(config, (database, novel) => {
-      const runtime = createChapterRuntime(database)
-      const volume = runtime.getVolumeByNo(volume_no)
-      if (!volume) throw new Error(`第 ${volume_no} 卷还没建档：先调 save_volume_outline 把卷落下来。`)
-
-      const saved: Array<{ idx: number; chapterId: number; created: boolean; place: string | null; cast: { total: number; resolved: number; unresolved: string[] } }> = []
-      const failed: Array<{ index: number; error: string }> = []
-
-      for (const item of chapters) {
-        try {
-          const result = runtime.saveChapterOutline(volume.id, {
-            index: item.index,
-            title: item.title,
-            goal: item.goal,
-            conflict: item.conflict,
-            hook: item.hook,
-            emotion: item.emotion,
-            summary: item.summary,
-            place: item.place,
-            characters: item.characters,
-            wordCountTarget: item.word_count_target,
-          } as ChapterOutlineInput)
-
-          const unresolved = result.cast.filter((c) => c.characterId === null).map((c) => c.raw)
-          saved.push({
-            idx: result.chapter.idx,
-            chapterId: result.chapter.id,
-            created: result.created,
-            place: result.chapter.placeRaw,
-            cast: { total: result.cast.length, resolved: result.cast.length - unresolved.length, unresolved },
-          })
-
-          rememberNovelEvent(novel.id, {
-            title: `第${result.chapter.idx}章章纲`,
-            content: JSON.stringify(result.chapter),
-            sourceType: 'chapter_outline',
-            sourceId: `chapter:${result.chapter.id}:outline`,
-            volumeId: volume.id,
-            chapterId: result.chapter.id,
-          })
-        } catch (error) {
-          // 这一条失败不该带走其余各条 —— 它们已经落好了，回滚它们只会把好数据扔掉
-          failed.push({ index: item.index, error: error instanceof Error ? error.message : String(error) })
-        }
-      }
+      // 落库 + 逐条记忆都在 novelEffects 里；HTTP 落章纲走的是同一个函数
+      const { volume, saved, failed } = saveChapterOutlinesWithMemory(
+        database,
+        novel.id,
+        volume_no,
+        chapters.map((item) => ({ ...item, wordCountTarget: item.word_count_target }) as ChapterOutlineInput),
+      )
 
       const 待办 = saved.flatMap((c) => c.cast.unresolved.map((raw) => ({ idx: c.idx, raw })))
 

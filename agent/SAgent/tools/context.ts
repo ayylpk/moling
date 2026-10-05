@@ -1,8 +1,6 @@
 import type { Database } from 'bun:sqlite'
 import type { RunnableConfig } from '@langchain/core/runnables'
 
-import { captureNovelEvent } from '../../storage/autoCapture'
-import type { L0Event } from '../../storage/portraitPipeline'
 import { openCatalogDatabase, openNovelDatabase } from '../../storage/novelDatabase'
 import { createWorldRuntime } from '../worldRuntime'
 
@@ -60,15 +58,13 @@ export const pack = (label: string, value: unknown): string =>
   `【${label}】\n${typeof value === 'string' ? value : JSON.stringify(value, null, 2)}`
 
 /**
- * 落库之后的自动记忆。
+ * 落库之后的自动记忆 —— 实现在 `storage/novelEffects.ts`，那里是**工具层与 HTTP 层的共同出口**。
+ * 这里只做转出：工具原先就从 './context' 拿它，不必为了搬家改一堆 import。
  *
- * **失败绝不影响业务**：记忆链路里挂着 embedding 与模型调用，它挂了不该把刚提交的
- * 角色/大纲/裁决一起回滚（那会让"存成功"变成一句谎话）。所以这里不 await、不抛，
- * 出什么错都咽下去 —— 记忆是锦上添花，不是业务的一部分。
+ * 记忆**失败绝不影响业务**：链路里挂着 embedding 与模型调用，它挂了不该把刚提交的
+ * 角色/大纲/裁决一起回滚（那会让「存成功」变成一句谎话）。
  */
-export const rememberNovelEvent = (novelId: number, event: Omit<L0Event, 'novelId'>): void => {
-  void captureNovelEvent(novelId, event).catch(() => undefined)
-}
+export { rememberNovelEvent } from '../../storage/novelEffects'
 
 /**
  * 把 per-novel 库里的世界观渲染成**子 agent 看得懂的紧凑文本**。

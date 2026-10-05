@@ -1,7 +1,7 @@
 import { tool } from 'langchain'
 import type { RunnableConfig } from '@langchain/core/runnables'
 import * as z from 'zod'
-import { captureNovelEvent } from '../../storage/autoCapture'
+import { saveWorldWithMemory } from '../../storage/novelEffects'
 import { openCatalogDatabase, openNovelDatabase } from '../../storage/novelDatabase'
 import { createWorldRuntime, type WorldInput } from '../worldRuntime'
 
@@ -23,8 +23,7 @@ export const saveWorld = tool(
     const novel = novelOf(config)
     const database = openNovelDatabase(novel.slug)
     try {
-      const world = createWorldRuntime(database).create(input as WorldInput)
-      void captureNovelEvent(novel.id, { title: `世界观:${world.name}:v${world.version}`, content: JSON.stringify(world), sourceType: 'world', sourceId: `world:${world.id}` }).catch(() => undefined)
+      const world = saveWorldWithMemory(database, novel.id, input as WorldInput)
       return pack('世界观已落库', { id: world.id, version: world.version, name: world.name, ruleCount: world.rules?.length ?? 0, termCount: world.terms?.length ?? 0 })
     } finally { database.close() }
   },

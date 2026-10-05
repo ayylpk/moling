@@ -1,9 +1,10 @@
 import { tool } from 'langchain'
 import * as z from 'zod'
 
+import { saveVolumeOutlineWithMemory } from '../../storage/novelEffects'
 import { createChapterRuntime } from '../chapterRuntime'
 import { createOutlineRuntime, type AnchorInput } from '../outlineRuntime'
-import { pack, rememberNovelEvent, withNovelDatabase } from './context'
+import { pack, withNovelDatabase } from './context'
 
 /**
  * 大纲工具 —— 卷 + 卷纲 + 全篇锚点。
@@ -20,19 +21,6 @@ import { pack, rememberNovelEvent, withNovelDatabase } from './context'
 export const saveVolumeOutline = tool(
   async ({ volume, direction, structure, pacing, constraints }, config) =>
     withNovelDatabase(config, (database, novel) => {
-      const chapters = createChapterRuntime(database)
-      const outlines = createOutlineRuntime(database)
-
-      const created = chapters.createVolume({
-        no: volume.no,
-        name: volume.name,
-        goal: volume.goal,
-        fromState: volume.from_state,
-        toState: volume.to_state,
-        startChapter: volume.start_chapter,
-        endChapter: volume.end_chapter,
-      })
-
       // 这一卷提交的锚点 —— 同时也是 outline_volumes 里要留的那份快照
       const anchorInput: AnchorInput = {
         logline: direction.logline,
@@ -45,24 +33,26 @@ export const saveVolumeOutline = tool(
         lockedByVolume: volume.no,
       }
 
-      // 顺序有意义：先写锚点（第一卷），再写卷纲 —— 这样第一卷的快照和锚点一致、不误报漂移
-      const anchor = outlines.saveAnchor(anchorInput)
-      const outline = outlines.saveVolumeOutline({
-        volumeId: created.volume.id,
-        structureType: structure.type,
-        acts: structure.acts ?? [],
-        turningPoints: structure.turningPoints ?? [],
-        pacing,
-        constraints,
-        anchorSnapshot: anchorInput,
-      })
-
-      rememberNovelEvent(novel.id, {
-        title: `卷纲:${volume.name}`,
-        content: JSON.stringify({ volume, direction, structureType: structure.type, acts: structure.acts ?? [] }),
-        sourceType: 'volume_outline',
-        sourceId: `volume:${created.volume.id}`,
-        volumeId: created.volume.id,
+      // 卷 + 锚点 + 卷纲 + 记忆：绑定与顺序都在 novelEffects 里
+      // （顺序有意义：先写锚点再写卷纲，第一卷的快照才和锚点一致、不误报漂移）
+      const { created, anchor, outline } = saveVolumeOutlineWithMemory(database, novel.id, {
+        volume: {
+          no: volume.no,
+          name: volume.name,
+          goal: volume.goal,
+          fromState: volume.from_state,
+          toState: volume.to_state,
+          startChapter: volume.start_chapter,
+          endChapter: volume.end_chapter,
+        },
+        anchor: anchorInput,
+        outline: {
+          structureType: structure.type,
+          acts: structure.acts ?? [],
+          turningPoints: structure.turningPoints ?? [],
+          pacing,
+          constraints,
+        },
       })
 
       return pack(`卷大纲已落库｜volume_id:${created.volume.id}｜第 ${volume.no} 卷`, {

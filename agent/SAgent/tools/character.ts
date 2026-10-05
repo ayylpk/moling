@@ -1,9 +1,9 @@
 import { tool } from 'langchain'
 import * as z from 'zod'
 
+import { saveCharacterWithMemory } from '../../storage/novelEffects'
 import { createCharacterRuntime, type CharacterInput } from '../characterRuntime'
-import { createChapterRuntime } from '../chapterRuntime'
-import { pack, rememberNovelEvent, withNovelDatabase } from './context'
+import { pack, withNovelDatabase } from './context'
 
 /**
  * 角色卡工具 —— 把 characterRuntime 接到中心 Agent 手上。
@@ -16,19 +16,9 @@ import { pack, rememberNovelEvent, withNovelDatabase } from './context'
 export const saveCharacter = tool(
   async (input, config) =>
     withNovelDatabase(config, (database, novel) => {
-      const runtime = createCharacterRuntime(database)
-      const { character, created } = runtime.create(input as CharacterInput)
-
-      // 建好之后回头补：这一章要的人到位了
-      const resolvedCast = created ? createChapterRuntime(database).resolveCast(character.name, character.id) : 0
-
-      rememberNovelEvent(novel.id, {
-        title: `角色:${character.name}`,
-        content: JSON.stringify(character),
-        sourceType: 'character',
-        sourceId: `character:${character.id}`,
-        characterId: character.id,
-      })
+      // 落库 + 回填章纲里的出场引用 + 发记忆：三步在 novelEffects 里绑在一起。
+      // HTTP 落库走的是同一个函数，所以不存在「库落了、记忆没进」的分叉。
+      const { character, created, resolvedCast } = saveCharacterWithMemory(database, novel.id, input as CharacterInput)
 
       return pack(created ? `角色已落库｜character_id:${character.id}` : `角色已存在，未重复创建｜character_id:${character.id}`, {
         id: character.id,

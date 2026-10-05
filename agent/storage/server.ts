@@ -5,7 +5,16 @@ import { createWorldRuntime, type WorldInput } from '../SAgent/worldRuntime'
 import { createCharacterRuntime, type CharacterInput, type CharacterPatch } from '../SAgent/characterRuntime'
 import { createLocationRuntime, type LocationInput } from '../SAgent/locationRuntime'
 import { createOutlineRuntime, type AnchorInput, type VolumeOutlineInput } from '../SAgent/outlineRuntime'
-import { createChapterRuntime, type ChapterOutlinePatch } from '../SAgent/chapterRuntime'
+import { createChapterRuntime, type ChapterOutlinePatch, type TextStage } from '../SAgent/chapterRuntime'
+import {
+  rememberChapterOutline,
+  rememberChapterText,
+  rememberCharacter,
+  rememberVolumeOutline,
+  rememberWorld,
+  saveCharacterWithMemory,
+  saveLocationWithMemory,
+} from './novelEffects'
 import { createSAgent } from '../SAgent'
 import { readWorkflowStatus, readWorkflowSummary } from './workflowStatus'
 
@@ -79,7 +88,13 @@ const server = Bun.serve({
         try {
           const runtime = createWorldRuntime(database)
           if (request.method === 'GET') return json(runtime.list())
-          if (request.method === 'POST') return json(runtime.create(await request.json() as WorldInput), 201)
+          if (request.method === 'POST') {
+            const body = await request.json() as WorldInput
+            const world = runtime.create(body)
+            // HTTP 落库也要进记忆链路 —— 与 save_world 工具走同一份记忆格式（见 novelEffects）
+            rememberWorld(novel.id, world)
+            return json(world, 201)
+          }
         } finally { database.close() }
       }
       if (parts[0] === 'api' && parts[1] === 'novels' && parts[2] && parts[3] === 'chat' && request.method === 'POST') {
@@ -106,7 +121,23 @@ const server = Bun.serve({
       if (parts[0] === 'api' && parts[1] === 'novels' && parts[2] && !parts[3] && request.method === 'GET') { const novel = catalogNovel(Number(parts[2])); return novel ? json(novel) : bad('小说不存在', 404) }
       if (parts[0] === 'api' && parts[1] === 'chapters' && parts[2] && parts[3] === 'text') {
         const chapterId = Number(parts[2]); const stage = url.searchParams.get('stage') ?? 'draft'
-        for (const novel of listNovels()) { const database = openNovelDatabase(novel.slug); try { if (!database.query('SELECT id FROM chapters WHERE id = ?').get(chapterId)) continue; if (request.method === 'GET') return json(database.query('SELECT * FROM chapter_texts WHERE chapter_id = ? AND stage = ?').get(chapterId, stage) ?? { chapter_id: chapterId, stage, text: '' }); if (request.method === 'PUT') { const body = await request.json() as { text?: string; summary?: string; ends_with?: string }; database.query(`INSERT INTO chapter_texts (chapter_id, stage, text, summary, ends_with) VALUES (?, ?, ?, ?, ?) ON CONFLICT(chapter_id, stage) DO UPDATE SET text=excluded.text, summary=excluded.summary, ends_with=excluded.ends_with, updated_at=datetime('now','localtime')`).run(chapterId, stage, body.text ?? '', body.summary ?? '', body.ends_with ?? ''); return json(database.query('SELECT * FROM chapter_texts WHERE chapter_id = ? AND stage = ?').get(chapterId, stage)) } } finally { database.close() } }
+        for (const novel of listNovels()) {
+          const database = openNovelDatabase(novel.slug)
+          try {
+            const runtime = createChapterRuntime(database)
+            const chapter = runtime.getChapterById(chapterId)
+            if (!chapter) continue
+            if (request.method === 'GET') return json(database.query('SELECT * FROM chapter_texts WHERE chapter_id = ? AND stage = ?').get(chapterId, stage) ?? { chapter_id: chapterId, stage, text: '' })
+            if (request.method === 'PUT') {
+              const body = await request.json() as { text?: string; summary?: string; ends_with?: string }
+              // 走 runtime 落库，不再内联 SQL —— 顺手把「手写终稿」也接进记忆链路
+              // （与 generate_chapter 落 final 用同一份格式，见 novelEffects 的 rememberChapterText）
+              runtime.saveText(chapter.idx, { stage: stage as TextStage, text: body.text ?? '', summary: body.summary, endsWith: body.ends_with })
+              rememberChapterText(novel.id, { chapterId, chapterIdx: chapter.idx, stage, text: body.text ?? '', summary: body.summary, endsWith: body.ends_with })
+              return json(runtime.getText(chapter.idx, stage as TextStage))
+            }
+          } finally { database.close() }
+        }
         return bad('章节不存在', 404)
       }
       if (parts[0] === 'api' && parts[1] === 'novels' && parts[2] && parts[3] === 'memories') {
@@ -147,17 +178,21 @@ const server = Bun.serve({
         const characterId = parts[4]
         if (request.method === 'PUT' && characterId) {
           const patch = await request.json() as CharacterPatch
-          return withNovelDb(parts[2], (_novel, database) => {
+          return withNovelDb(parts[2], (novel, database) => {
             const updated = createCharacterRuntime(database).update(Number(characterId), patch)
-            return updated ? json(updated) : bad('角色不存在', 404)
+            if (!updated) return bad('角色不存在', 404)
+            // 改卡也是一次落库：不记的话，改完这条事实在记忆里就不存在
+            rememberCharacter(novel.id, updated)
+            return json(updated)
           })
         }
         if (request.method === 'POST' && !characterId) {
           const body = await request.json() as CharacterInput
-          return withNovelDb(parts[2], (_novel, database) => {
-            const created = createCharacterRuntime(database).create(body)
+          return withNovelDb(parts[2], (novel, database) => {
+            // 与 save_character 工具同一个入口：落库 + 回填章纲里的出场引用 + 发记忆
+            const saved = saveCharacterWithMemory(database, novel.id, body)
             // 201 = 新建，200 = 同名卡已存在（没有重复建）
-            return json(created.character, created.created ? 201 : 200)
+            return json(saved.character, saved.created ? 201 : 200)
           })
         }
         if (request.method === 'GET' && !characterId) {
@@ -170,9 +205,10 @@ const server = Bun.serve({
         if (request.method === 'GET') return withNovelDb(parts[2], (_novel, database) => json(createLocationRuntime(database).list()))
         if (request.method === 'POST') {
           const body = await request.json() as LocationInput
-          return withNovelDb(parts[2], (_novel, database) => {
-            const created = createLocationRuntime(database).create(body)
-            return json(created.location, created.created ? 201 : 200)
+          return withNovelDb(parts[2], (novel, database) => {
+            // 与 save_location 工具同一个入口：落库 + 回填挂在它名下的子地点 + 发记忆
+            const saved = saveLocationWithMemory(database, novel.id, body)
+            return json(saved.location, saved.created ? 201 : 200)
           })
         }
       }
@@ -188,13 +224,27 @@ const server = Bun.serve({
         if (request.method === 'POST') {
           const body = await request.json() as { anchor?: AnchorInput; volumeOutline?: VolumeOutlineInput }
           if (!body?.anchor && !body?.volumeOutline) return bad('请求体至少要有 anchor 或 volumeOutline')
-          return withNovelDb(parts[2], (_novel, database) => {
+          return withNovelDb(parts[2], (novel, database) => {
             const runtime = createOutlineRuntime(database)
             // 一次要写两张表（锚点 + 卷纲）就包一个事务：半成品的锚点比没锚点更难查
-            return json(database.transaction(() => ({
+            const result = database.transaction(() => ({
               anchor: body.anchor ? runtime.saveAnchor(body.anchor) : null,
               outline: body.volumeOutline ? runtime.saveVolumeOutline(body.volumeOutline) : null,
-            }))(), 201)
+            }))()
+            // 卷纲同样要进记忆链路（工具层的 save_volume_outline 会记，这里不能漏）
+            if (result.outline) {
+              const outline = result.outline.outline
+              const volume = createChapterRuntime(database).listVolumes().find((v) => v.id === outline.volumeId)
+              rememberVolumeOutline(novel.id, {
+                volumeId: outline.volumeId,
+                volumeName: volume?.name ?? `第${outline.volumeId}卷`,
+                volume: { id: outline.volumeId, name: volume?.name ?? '', no: volume?.no },
+                direction: body.anchor,
+                structureType: outline.structureType,
+                acts: outline.acts,
+              })
+            }
+            return json(result, 201)
           })
         }
       }
@@ -229,11 +279,11 @@ const server = Bun.serve({
       /* ==================== 章纲（新增 / 修改） ==================== */
       if (parts[0] === 'api' && parts[1] === 'novels' && parts[2] && parts[3] === 'chapters' && request.method === 'POST') {
         const body = await request.json() as ChapterBody
-        return withNovelDb(parts[2], (_novel, database) => {
+        return withNovelDb(parts[2], (novel, database) => {
           const runtime = createChapterRuntime(database)
           const volumeId = body.volume_id ?? (body.volume_no === undefined ? undefined : runtime.getVolumeByNo(Number(body.volume_no))?.id)
           if (volumeId === undefined) return bad('缺少 volume_id（或 volume_no），或该卷不存在')
-          return json(runtime.saveChapterOutline(volumeId, {
+          const saved = runtime.saveChapterOutline(volumeId, {
             index: Number(body.index),
             title: String(body.title ?? ''),
             goal: body.goal,
@@ -244,7 +294,9 @@ const server = Bun.serve({
             place: body.place,
             characters: body.characters,
             wordCountTarget: body.word_count_target,
-          }), 201)
+          })
+          rememberChapterOutline(novel.id, saved.chapter, volumeId)
+          return json(saved, 201)
         })
       }
 
@@ -260,7 +312,9 @@ const server = Bun.serve({
           try {
             const runtime = createChapterRuntime(database)
             if (!runtime.getChapterById(chapterId)) continue
-            return json(runtime.updateChapter(chapterId, patch))
+            const updated = runtime.updateChapter(chapterId, patch)
+            if (updated) rememberChapterOutline(novel.id, updated, updated.volumeId)
+            return json(updated)
           } finally { database.close() }
         }
         return bad('章节不存在', 404)

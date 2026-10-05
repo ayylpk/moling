@@ -1,8 +1,9 @@
 import { tool } from 'langchain'
 import * as z from 'zod'
 
-import { createDecisionRuntime } from '../decisionRuntime'
-import { pack, rememberNovelEvent, withNovelDatabase } from './context'
+import { saveActorDecisionWithMemory } from '../../storage/novelEffects'
+import { createDecisionRuntime, type DecisionInput } from '../decisionRuntime'
+import { pack, withNovelDatabase } from './context'
 
 /**
  * 角色裁决工具。
@@ -17,8 +18,7 @@ import { pack, rememberNovelEvent, withNovelDatabase } from './context'
 export const saveActorDecision = tool(
   async (input, config) =>
     withNovelDatabase(config, (database, novel) => {
-      const runtime = createDecisionRuntime(database)
-      const saved = runtime.save({
+      const saved = saveActorDecisionWithMemory(database, novel.id, {
         chapterIdx: input.chapter_idx,
         characterName: input.character_name,
         situation: input.situation,
@@ -28,17 +28,7 @@ export const saveActorDecision = tool(
         line: input.line,
         customAnswer: input.custom_answer,
         promptHash: input.prompt_hash,
-      })
-
-      rememberNovelEvent(novel.id, {
-        title: `第${input.chapter_idx}章裁决`,
-        content: JSON.stringify(saved.decision),
-        sourceType: 'decision',
-        sourceId: `decision:${saved.decision.chapterId}:${saved.decision.promptHash}`,
-        chapterId: saved.decision.chapterId,
-        characterId: saved.decision.characterId ?? undefined,
-      })
-
+      } as DecisionInput)
       return pack(saved.reused ? '裁决已存在，直接复用（没有新增记录）' : '裁决已落库', {
         decision_id: saved.decision.id,
         chapter_idx: input.chapter_idx,
