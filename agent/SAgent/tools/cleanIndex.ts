@@ -11,17 +11,19 @@
  * 「生成」与「落库」是两个动作，别把它们合成一个工具 —— 合成之后
  * "生成不满意"就只能靠重跑整条链来收拾，而生成是贵的那个。
  *
- * ── 同目录下不在出口、也不许再被 import 的文件 ──
- *   · tools/database.ts  —— 走 agent/my-app 的服务、写 resources/myapp.sqlite，**继续废弃，禁止再挂**
- *   · tools/subagents.ts —— 旧的整体封装，**不要整体 import**（它 import 了 my-app 的 service）。
- *     其中五个已迁成 generate_world / generate_character / generate_location / generate_outline /
- *     generate_decision；剩下的 run_chapter_writer 与 run_prose_polisher **刻意不迁** ——
+ * ── 已移出本目录的旧文件（10-05 隔离到 $TEMP，git 里随时可取回）──
+ *   · tools/database.ts  —— 走 agent/my-app 的服务、写 resources/myapp.sqlite。已废弃。
+ *   · tools/subagents.ts —— 旧的七个子 agent 整体封装。五个已迁成
+ *     generate_world / generate_character / generate_location / generate_outline /
+ *     generate_decision；run_chapter_writer 与 run_prose_polisher **刻意不迁** ——
  *     正文是 generate_chapter 内部一条龙的事，不再暴露第二套章节调度工具。
- *   · tools/tasks.ts     —— 断点续跑的调度侧（plan/claim/finish/fail）。**不作为工具挂载**：
- *     它属于 generate_chapter 的内部实现，用户和中心 Agent 都不直接管理 generation_tasks。
- *   · tools/index.ts     —— 旧出口，里面的 export * from './chapter' 指向不存在的文件
- * 它们是迁移参考，不是运行时依赖。（清理只能 mv 隔离，本机不许删。）
- * 口径提醒：**没有"子 agent 的工具"**——上面这些挂了都是中心 Agent 的工具，只是有的还没接。
+ *   · tools/tasks.ts     —— 断点续跑的调度侧（plan/claim/finish/fail）。它的活在
+ *     chapterRuntime + generate_chapter 里；用户和中心 Agent 都不直接管 generation_tasks。
+ *   · tools/index.ts     —— 旧出口（`export * from './chapter'` 指向不存在的文件），更早一批移走。
+ * 移走它们的理由只有一个：它们 import my-app 的 service，而 my-app 写的
+ * resources/myapp.sqlite 早已不是当前架构的数据源。**别再 import 它们。**
+ * 要看某个子 agent 的提示词，去 agent/<Name>/prompt.ts，那是原件。
+ * 口径提醒：**没有"子 agent 的工具"**——挂上的一律是中心 Agent 的工具。
  */
 export * from './memory'
 export * from './portrait'

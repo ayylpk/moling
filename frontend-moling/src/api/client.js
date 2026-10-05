@@ -4,10 +4,9 @@
  * 基座：agent/storage/server.ts（根 package.json 的 `npm run api:dev` 起的就是它，:3000）。
  * 走 vite proxy（/api → :3000），所以这里一律相对路径，禁写死绝对地址（DESIGN.md 第七节）。
  *
- * ⚠️ 项目里还有第二个后端 agent/my-app/src/index.ts（Hono，同样 :3000，两者互斥）。
- * 它的路由更全（worlds / volumes / outline / generation / decisions），但 URL 形态不同：
- *   正文：my-app = PUT /api/novels/:id/chapters/:cid/texts ／ storage = PUT /api/chapters/:cid/text?stage=
- * 将来换基座、或把两者并到一个端口，只改本文件，页面不用动。
+ * 只有这一个后端。旧注释里提过的「第二个后端 agent/my-app/src/index.ts（Hono，同样 :3000，
+ * 两者互斥）」已经不存在于运行路径上，它的 URL 形态（正文 PUT /api/novels/:id/chapters/:cid/texts）
+ * 与当前基座不同，别照着它写请求。正式接口清单见 ./endpoints.js。
  */
 
 const request = async (url, options = {}) => {
