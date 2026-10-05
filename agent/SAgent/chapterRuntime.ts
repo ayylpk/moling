@@ -81,6 +81,19 @@ export type ChapterOutline = {
   wordCountTarget: number
 }
 
+/** 改一条章纲。按 id 改（前端 PUT /api/chapters/:id 用），不是按「卷内章号」 */
+export type ChapterOutlinePatch = {
+  title?: string
+  goal?: string
+  conflict?: string
+  hook?: string
+  emotion?: string
+  summary?: string
+  /** 改地点：写已有地名或 `NEW:戏剧功能`；会顺带重解析 place_id */
+  place?: string
+  wordCountTarget?: number
+}
+
 export type ChapterCast = {
   id: number
   chapterId: number
@@ -158,6 +171,15 @@ export const createChapterRuntime = (database: Database) => {
 
   const readChapterRow = (idx: number): Record<string, unknown> | null =>
     (database.query('SELECT * FROM chapters WHERE idx = ?').get(idx) as Record<string, unknown> | null)
+
+  /** 按主键取行。HTTP 的 /api/chapters/:id 走的是 id，不是章号 */
+  const readChapterRowById = (id: number): Record<string, unknown> | null =>
+    (database.query('SELECT * FROM chapters WHERE id = ?').get(id) as Record<string, unknown> | null)
+
+  const readChapterById = (id: number): ChapterOutline | null => {
+    const row = readChapterRowById(id)
+    return row ? toChapter(row) : null
+  }
 
   /** 章级：名字 → id，精确相等。`NEW:` 不问、也不存在 */
   const characterIdByName = (name: string): number | null => {
@@ -322,6 +344,51 @@ export const createChapterRuntime = (database: Database) => {
     getChapter(idx: number): ChapterOutline | null {
       const row = readChapterRow(idx)
       return row ? toChapter(row) : null
+    },
+    /** 按主键取一章。HTTP 的 PUT /api/chapters/:id 拿的是 id，不是章号 */
+    getChapterById: readChapterById,
+    /**
+     * 改一章。**按 id 改**，只动传进来的那几个字段（不像 saveChapterOutline 那样整条覆盖）——
+     * 前端在章纲页改一个标题，不该把 place_raw 和字数目标一起抹掉。
+     */
+    updateChapter(id: number, patch: ChapterOutlinePatch): ChapterOutline | null {
+      if (!readChapterById(id)) return null
+      const sets: string[] = []
+      const params: Array<string | number | null> = []
+
+      if (patch.title !== undefined) {
+        if (!patch.title.trim()) throw new TypeError('title 不能为空')
+        sets.push('title = ?')
+        params.push(patch.title.trim())
+      }
+      for (const [field, column] of [
+        ['goal', 'goal'],
+        ['conflict', 'conflict'],
+        ['hook', 'hook'],
+        ['emotion', 'emotion'],
+        ['summary', 'summary'],
+      ] as const) {
+        const value = patch[field]
+        if (value === undefined) continue
+        sets.push(`${column} = ?`)
+        params.push(value)
+      }
+      if (patch.place !== undefined) {
+        const placeRaw = patch.place.trim()
+        sets.push('place_raw = ?', 'place_id = ?')
+        params.push(placeRaw, locationIdByName(placeRaw))
+      }
+      if (patch.wordCountTarget !== undefined) {
+        if (!Number.isInteger(patch.wordCountTarget) || patch.wordCountTarget < 1) throw new TypeError('wordCountTarget 必须是正整数')
+        sets.push('word_count_target = ?')
+        params.push(patch.wordCountTarget)
+      }
+
+      if (sets.length === 0) return readChapterById(id)
+      database
+        .query(`UPDATE chapters SET ${sets.join(', ')}, updated_at = datetime('now','localtime') WHERE id = ?`)
+        .run(...params, id)
+      return readChapterById(id)
     },
     listChapters(volumeId?: number): ChapterOutline[] {
       const rows = volumeId === undefined

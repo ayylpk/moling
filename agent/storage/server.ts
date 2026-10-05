@@ -2,6 +2,10 @@ import { openCatalogDatabase, openNovelDatabase } from './novelDatabase'
 import { createMemoryStore, type MemoryRecord } from './memoryStore'
 import { createSiliconFlowEmbeddingClient } from './embedding'
 import { createWorldRuntime, type WorldInput } from '../SAgent/worldRuntime'
+import { createCharacterRuntime, type CharacterInput, type CharacterPatch } from '../SAgent/characterRuntime'
+import { createLocationRuntime, type LocationInput } from '../SAgent/locationRuntime'
+import { createOutlineRuntime, type AnchorInput, type VolumeOutlineInput } from '../SAgent/outlineRuntime'
+import { createChapterRuntime, type ChapterOutlinePatch } from '../SAgent/chapterRuntime'
 import { createSAgent } from '../SAgent'
 import { readWorkflowStatus } from './workflowStatus'
 
@@ -14,6 +18,31 @@ const listNovels = (): Novel[] => { const database = openCatalogDatabase(); try 
 const embeddingClient = createSiliconFlowEmbeddingClient()
 const chatAgents = new Map<number, ReturnType<typeof createSAgent>>()
 const embedOrUndefined = async (input: string): Promise<number[] | undefined> => { try { return (await embeddingClient.embed([input]))[0] } catch (error) { console.warn(error instanceof Error ? error.message : error); return undefined } }
+
+/* ==================== 公共路由辅助 ==================== */
+
+/**
+ * 打开这本小说的 per-novel 库、执行 action、关掉它。
+ * 小说不存在时直接返回 404 Response —— 调用方用 isResponse 判一下就行。
+ *
+ * 有了它，每条路由只要写「业务」那一句；「先找小说、再开库、再关库」
+ * 这段路只有一种写法，就不会出现某条路由漏关连接或开错库。
+ */
+const isResponse = (value: unknown): value is Response => value instanceof Response
+const withNovelDb = <T>(rawId: string | undefined, action: (novel: Novel, database: ReturnType<typeof openNovelDatabase>) => T): T | Response => {
+  const novel = catalogNovel(Number(rawId))
+  if (!novel) return bad('小说不存在', 404)
+  const database = openNovelDatabase(novel.slug)
+  try { return action(novel, database) } finally { database.close() }
+}
+
+/** 章纲/卷的入参用库里的列名（snake）；转成 runtime 的驼峰 */
+type VolumeBody = { no?: number; name?: string; goal?: string; from_state?: string; to_state?: string; start_chapter?: number; end_chapter?: number }
+type ChapterBody = {
+  volume_id?: number; volume_no?: number; index?: number; title?: string
+  goal?: string; conflict?: string; hook?: string; emotion?: string; summary?: string
+  place?: string; characters?: string[]; word_count_target?: number
+}
 
 const server = Bun.serve({
   port: 3000,
@@ -107,8 +136,136 @@ const server = Bun.serve({
           return json(database.query(`SELECT p.*, c.name AS character_name FROM character_portraits p LEFT JOIN characters c ON c.id = p.character_id WHERE p.version = (SELECT max(p2.version) FROM character_portraits p2 WHERE p2.novel_id = p.novel_id AND p2.character_id = p.character_id) ORDER BY p.character_id`).all())
         } finally { database.close() }
       }
+      /* ==================== 角色 ==================== */
+      if (parts[0] === 'api' && parts[1] === 'novels' && parts[2] && parts[3] === 'characters') {
+        const characterId = parts[4]
+        if (request.method === 'PUT' && characterId) {
+          const patch = await request.json() as CharacterPatch
+          return withNovelDb(parts[2], (_novel, database) => {
+            const updated = createCharacterRuntime(database).update(Number(characterId), patch)
+            return updated ? json(updated) : bad('角色不存在', 404)
+          })
+        }
+        if (request.method === 'POST' && !characterId) {
+          const body = await request.json() as CharacterInput
+          return withNovelDb(parts[2], (_novel, database) => {
+            const created = createCharacterRuntime(database).create(body)
+            // 201 = 新建，200 = 同名卡已存在（没有重复建）
+            return json(created.character, created.created ? 201 : 200)
+          })
+        }
+        if (request.method === 'GET' && !characterId) {
+          return withNovelDb(parts[2], (_novel, database) => json(createCharacterRuntime(database).list()))
+        }
+      }
+
+      /* ==================== 地点 ==================== */
+      if (parts[0] === 'api' && parts[1] === 'novels' && parts[2] && parts[3] === 'locations') {
+        if (request.method === 'GET') return withNovelDb(parts[2], (_novel, database) => json(createLocationRuntime(database).list()))
+        if (request.method === 'POST') {
+          const body = await request.json() as LocationInput
+          return withNovelDb(parts[2], (_novel, database) => {
+            const created = createLocationRuntime(database).create(body)
+            return json(created.location, created.created ? 201 : 200)
+          })
+        }
+      }
+
+      /* ==================== 大纲（锚点 + 卷纲） ==================== */
+      if (parts[0] === 'api' && parts[1] === 'novels' && parts[2] && parts[3] === 'outline') {
+        if (request.method === 'GET') {
+          return withNovelDb(parts[2], (_novel, database) => {
+            const runtime = createOutlineRuntime(database)
+            return json({ anchor: runtime.currentAnchor(), volumeOutlines: runtime.listVolumeOutlines(), driftedVolumeIds: runtime.listDriftedVolumeIds() })
+          })
+        }
+        if (request.method === 'POST') {
+          const body = await request.json() as { anchor?: AnchorInput; volumeOutline?: VolumeOutlineInput }
+          if (!body?.anchor && !body?.volumeOutline) return bad('请求体至少要有 anchor 或 volumeOutline')
+          return withNovelDb(parts[2], (_novel, database) => {
+            const runtime = createOutlineRuntime(database)
+            // 一次要写两张表（锚点 + 卷纲）就包一个事务：半成品的锚点比没锚点更难查
+            return json(database.transaction(() => ({
+              anchor: body.anchor ? runtime.saveAnchor(body.anchor) : null,
+              outline: body.volumeOutline ? runtime.saveVolumeOutline(body.volumeOutline) : null,
+            }))(), 201)
+          })
+        }
+      }
+
+      /* ==================== 卷 ==================== */
+      if (parts[0] === 'api' && parts[1] === 'novels' && parts[2] && parts[3] === 'volumes') {
+        if (request.method === 'GET') {
+          return withNovelDb(parts[2], (_novel, database) => {
+            const chapters = createChapterRuntime(database)
+            const outlined = new Set(createOutlineRuntime(database).listVolumeOutlines().map((item) => item.volumeId))
+            // hasOutline 现算，卷表上没有这一列（存副本就会和事实不同步）
+            return json(chapters.listVolumes().map((volume) => ({ ...volume, hasOutline: outlined.has(volume.id) })))
+          })
+        }
+        if (request.method === 'POST') {
+          const body = await request.json() as VolumeBody
+          return withNovelDb(parts[2], (_novel, database) => {
+            const created = createChapterRuntime(database).createVolume({
+              no: Number(body.no),
+              name: String(body.name ?? ''),
+              goal: body.goal,
+              fromState: body.from_state,
+              toState: body.to_state,
+              startChapter: Number(body.start_chapter),
+              endChapter: Number(body.end_chapter),
+            })
+            return json(created, created.created ? 201 : 200)
+          })
+        }
+      }
+
+      /* ==================== 章纲（新增 / 修改） ==================== */
+      if (parts[0] === 'api' && parts[1] === 'novels' && parts[2] && parts[3] === 'chapters' && request.method === 'POST') {
+        const body = await request.json() as ChapterBody
+        return withNovelDb(parts[2], (_novel, database) => {
+          const runtime = createChapterRuntime(database)
+          const volumeId = body.volume_id ?? (body.volume_no === undefined ? undefined : runtime.getVolumeByNo(Number(body.volume_no))?.id)
+          if (volumeId === undefined) return bad('缺少 volume_id（或 volume_no），或该卷不存在')
+          return json(runtime.saveChapterOutline(volumeId, {
+            index: Number(body.index),
+            title: String(body.title ?? ''),
+            goal: body.goal,
+            conflict: body.conflict,
+            hook: body.hook,
+            emotion: body.emotion,
+            summary: body.summary,
+            place: body.place,
+            characters: body.characters,
+            wordCountTarget: body.word_count_target,
+          }), 201)
+        })
+      }
+
+      if (parts[0] === 'api' && parts[1] === 'chapters' && parts[2] && !parts[3] && request.method === 'PUT') {
+        // 章纲补丁的字段名：库/前端用 snake（word_count_target），runtime 内部是驼峰 —— 在这里对齐一次
+        const raw = await request.json() as ChapterOutlinePatch & { word_count_target?: number }
+        const { word_count_target: snakeTarget, ...rest } = raw
+        const patch: ChapterOutlinePatch = { ...rest, wordCountTarget: raw.wordCountTarget ?? snakeTarget }
+        const chapterId = Number(parts[2])
+        // 章 id 不带宽表，得挨本找它属于哪本书（与 /api/chapters/:id/text 同一种做法）
+        for (const novel of listNovels()) {
+          const database = openNovelDatabase(novel.slug)
+          try {
+            const runtime = createChapterRuntime(database)
+            if (!runtime.getChapterById(chapterId)) continue
+            return json(runtime.updateChapter(chapterId, patch))
+          } finally { database.close() }
+        }
+        return bad('章节不存在', 404)
+      }
+
       return bad('接口不存在', 404)
-    } catch (error) { return bad(error instanceof Error ? error.message : '服务器错误', 500) }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '服务器错误'
+      // runtime 的入参校验一律抛 TypeError —— 那是 400（请求不对），不是 500（服务器炸了）
+      return bad(message, error instanceof TypeError ? 400 : 500)
+    }
   },
 })
 console.log(`墨灵 API 已启动：http://localhost:${server.port}`)
