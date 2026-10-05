@@ -30,7 +30,7 @@
 
 L3 更新必须携带 `basedOnFactIds`。Embedding 服务失败时不会丢失原始记录、事实或画像，只会将该条标记为待补向量，并继续使用 FTS5 检索。
 
-L1 提取器通过 `createMemoryAutomation(...).processNext(extractor)` 注入。提取器负责把 L0 转成带 `novelId` 和来源的候选事实；L3 不由队列自动覆盖，只由中心 Agent 审核后调用画像工具。
+L1 提取器参考腾讯项目的质量过滤、场景/事实结构化输出和批内去重，专门适配小说事实类别：角色状态、关系、目标变化、世界规则、剧情转折、场景状态。正式落库后，若存在 `DEEPSEEK_API_KEY`、`ANTHROPIC_AUTH_TOKEN` 或 `API_KEY`，系统会异步处理一条 L0 任务；设置 `MEMORY_AUTO_L1=false` 可关闭自动模型调用。L3 不由队列自动覆盖，只由中心 Agent 审核后调用画像工具。
 
 ## HTTP 接口
 
