@@ -4,9 +4,14 @@ import type { Database } from 'bun:sqlite'
  * 地点卡 runtime —— per-novel 库的地点写入 / 读取入口。
  *
  * ── 这张表为什么是自引用的 ──
- * `parent_id → locations.id`。世界观只铺**粗骨架**（青州），细粒度地点
- * （旧观那口枯井）由剧情按需生长，但**必须挂得上去** —— 物理上挂在已有地点之下，
+ * `parent_id → locations.id`。世界观只铺**粗骨架**（临江老街），细粒度地点
+ * （老粮站晒台）由剧情按需生长，但**必须挂得上去** —— 物理上挂在已有地点之下，
  * 不能平铺成一堆同级名字。外键保证"子地点不可能挂在不存在的地点下"。
+ *
+ * ── 粗骨架是谁放进来的 ──
+ * `worldRuntime.create` 落世界观时，会把 places 逐条物化成这里的根节点。
+ * 这一步不能省：骨架不进表，parent 填了它的地点就没有 id 可指，而且会被
+ * `unresolvedParents()` **永久**报成待办（详见 worldRuntime 的 materializePlaces）。
  *
  * ── raw + 可空 id，是这一层的通用形态 ──
  * `parent_raw` 是卡上原样写的上级地名，`parent_id` 是查表解析的结果。
