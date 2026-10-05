@@ -6,12 +6,13 @@ import { api } from '../api/client.js';
 /**
  * 书稿：卷目录 + 正文编辑。
  *
- * 数据来自当前基座（agent/storage/server.ts）已写的两条接口：
+ * 数据来自当前基座（agent/storage/server.ts）的三条接口：
+ *   GET /api/novels/:id/volumes         —— 卷表（卷号 / 卷名 / 起止章）
  *   GET /api/novels/:id/chapters        —— 章表（含 volume_id / 章纲五字段 / textStage）
  *   GET / PUT /api/chapters/:id/text    —— 某一阶段正文
  *
- * 卷是**从章上 group 出来的**（章带 volume_id），不是单独请求 —— 当前基座没有
- * /volumes 接口，等有了再换成真卷名（卷名/起止章/卷目标都在卷表里）。
+ * 卷**以卷表为准**（卷名与卷号是真的），章按 volume_id 挂到卷下；
+ * 万一卷表还没建（只落了章纲），退回按 volume_id 现推、卷号只能用序号。
  *
  * 保存三层兜底：确认按钮即时存 → 改动后 10 秒自动存 → 离开页面前再存一次；
  * 每次落盘前先写 localStorage，API 不通时至少不丢字。
@@ -26,6 +27,7 @@ const STAGE_META = {
 export default function Manuscript() {
   const { novel, setSaving } = useWorkbench();
   const [chapters, setChapters] = useState([]);
+  const [volumeRows, setVolumeRows] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [volumeId, setVolumeId] = useState(null);
   const [chapterId, setChapterId] = useState(null);
@@ -33,41 +35,48 @@ export default function Manuscript() {
   const [dirty, setDirty] = useState(false);
   const [lastSaved, setLastSaved] = useState('尚未改动');
 
-  /* 卷 = 章按 volume_id 分组，保持章号顺序 */
+  /* 卷：以卷表为准（卷名/卷号是真的），章按 volume_id 挂上去 */
   const volumes = useMemo(() => {
-    const order = [];
-    const map = new Map();
+    const byVolume = new Map();
     for (const chapter of chapters) {
       const key = chapter.volume_id ?? 0;
-      if (!map.has(key)) {
-        map.set(key, []);
-        order.push(key);
-      }
-      map.get(key).push(chapter);
+      if (!byVolume.has(key)) byVolume.set(key, []);
+      byVolume.get(key).push(chapter);
     }
-    return order.map((key, index) => ({ id: key, no: index + 1, chapters: map.get(key) }));
-  }, [chapters]);
+    if (volumeRows.length > 0) {
+      return volumeRows.map((row) => ({ id: row.id, no: row.no, name: row.name, chapters: byVolume.get(row.id) ?? [] }));
+    }
+    // 卷表还没建（只落了章纲）：退回按 volume_id 现推，卷号只能用序号
+    return [...byVolume.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([key, list], index) => ({ id: key, no: index + 1, name: '', chapters: list }));
+  }, [chapters, volumeRows]);
 
   const volume = volumes.find((item) => item.id === volumeId) || volumes[0] || null;
   const chapter = volume?.chapters.find((item) => item.id === chapterId) || volume?.chapters[0] || null;
 
-  /* 换书 → 重取章节表 */
+  /* 换书 → 重取卷表与章节表 */
   useEffect(() => {
     if (!novel?.id) {
       setChapters([]);
+      setVolumeRows([]);
       setLoaded(true);
       return undefined;
     }
     let active = true;
     setLoaded(false);
-    api.listChapters(novel.id)
-      .then((items) => {
-        if (!active || !Array.isArray(items)) return;
-        setChapters(items);
-        setVolumeId(items[0]?.volume_id ?? null);
-        setChapterId(items[0]?.id ?? null);
+    Promise.all([
+      api.listChapters(novel.id).catch(() => []),
+      api.listVolumes(novel.id).catch(() => []),
+    ])
+      .then(([items, rows]) => {
+        if (!active) return;
+        const chapterList = Array.isArray(items) ? items : [];
+        setChapters(chapterList);
+        setVolumeRows(Array.isArray(rows) ? rows : []);
+        setVolumeId(chapterList[0]?.volume_id ?? null);
+        setChapterId(chapterList[0]?.id ?? null);
       })
-      .catch(() => { if (active) setChapters([]); })
       .finally(() => { if (active) setLoaded(true); });
     return () => { active = false; };
   }, [novel?.id]);
@@ -161,7 +170,7 @@ export default function Manuscript() {
               }}
               key={item.id}
             >
-              卷 {item.no} · {item.chapters.length} 章
+              第 {item.no} 卷{item.name ? ` · ${item.name}` : ''} · {item.chapters.length} 章
             </button>
           ))}
         </div>

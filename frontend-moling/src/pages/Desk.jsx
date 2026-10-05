@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import BlockTitle from '../components/BlockTitle.jsx';
 import { NOVEL_STATUS_META } from '../lib/enums.js';
 import { useWorkbench } from '../layout/WorkbenchLayout.jsx';
@@ -7,13 +7,13 @@ import { api } from '../api/client.js';
 /**
  * 书架：一卡一书，数据来自 `GET /api/novels`（目录库 novels 表）。
  *
- * 卡上四样都取自后端真字段：
+ * 卡上取自后端真字段：
  *   标题 title ／ 状态 status ／ 题材 genre + 文风 style ／ 目标字数 target_words
  *   + 主题 themes（JSON 数组）+ 简介 description/logline
+ * 另外每张卡补一行**工作流进度**（`GET /api/novels/:id/workflow` 的 phase/label 与任务合计）——
+ * 那是"这本书走到哪一步了"的唯一判据，与中心 Agent 的状态快照同源。
+ * 拿不到就**不画那一行**（服务没起来时不该显示一个编出来的进度）。
  * 点卡 = 把当前小说切到这本（切完去书稿页看正文）。
- *
- * 注意：卡上**没有**六阶进度条 —— 那是 generation 的任务表，当前基座
- * （agent/storage/server.ts）没有这个接口。等接口有了再补，先不摆假进度。
  */
 /** 目录库把 themes 存成 JSON 文本，接口原样返回字符串 —— 两种形态都吃 */
 const readThemes = (value) => {
@@ -33,6 +33,26 @@ export default function Desk() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [form, setForm] = useState({ title: '', genre: '', style: '', description: '', logline: '', target_words: '', themes: '' });
+  /** bookId → 工作流摘要；取不到的那本不会出现在这里（卡片上就不画进度行） */
+  const [progress, setProgress] = useState({});
+
+  /* 书架一有变动就补一次工作流进度。每本一次请求：书架规模小，换来的是"进度永远与库同步" */
+  useEffect(() => {
+    if (novels.length === 0) {
+      setProgress({});
+      return undefined;
+    }
+    let active = true;
+    Promise.all(novels.map((book) => api.workflow(book.id).then((summary) => [book.id, summary]).catch(() => [book.id, null])))
+      .then((pairs) => {
+        if (!active) return;
+        const map = {};
+        for (const [bookId, summary] of pairs) if (summary) map[bookId] = summary;
+        setProgress(map);
+      })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, [novels]);
 
   const shown = filter === 'all' ? novels : novels.filter((item) => item.status === filter);
   const update = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.value }));
@@ -141,6 +161,17 @@ export default function Desk() {
                 <div className="field">
                   <p className="field__k" data-en="logline">一句话故事</p>
                   <p className="field__v">{book.logline || book.description}</p>
+                </div>
+              )}
+              {progress[book.id] && (
+                <div className="field">
+                  <p className="field__k" data-en="phase">进度</p>
+                  <p className="field__v">
+                    {progress[book.id].label}
+                    {progress[book.id].total > 0 ? ` · 任务 ${progress[book.id].done}/${progress[book.id].total}` : ''}
+                    {progress[book.id].running > 0 ? ` · ${progress[book.id].running} 在写` : ''}
+                    {progress[book.id].failed > 0 ? ` · ${progress[book.id].failed} 折笔` : ''}
+                  </p>
                 </div>
               )}
             </article>
