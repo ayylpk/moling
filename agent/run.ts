@@ -1,26 +1,27 @@
 /**
- * 小说创作系统 —— 运行入口。
- *
- * 装配在 ./system.ts（状态、checkpointer、SAgent 接线），这里只负责"跑一次"：
- * 找到小说 → 起系统 → 把当前状态拼进这一轮的输入 → 把作者的话交给 SAgent。
+ * 开发 CLI —— 在终端里跟中心 Agent 说一句话。
  *
  * 用法：
- *   bun agent/run.ts <slug>                      # 看当前进度
+ *   bun agent/run.ts <slug>                      # 让它汇报进度、给下一步建议
  *   bun agent/run.ts <slug> 把大纲排到第 26 章     # 交代一件事
  *
- * slug 就是 novels 表的唯一键，同时也是 checkpoint 文件名（一本一个文件）。
- * 小说不存在时会自动建一本空的——这样第一次跑不用先手动建档。
+ * ── 它是什么，不是什么 ──
+ * **正式入口是 `agent/storage/server.ts` 的 `/api/novels/:id/chat`**（前端走的就是它）。
+ * 这个文件只是本地调试用的壳，省得为了试一句话去开前端 —— 不该被当成第二个后端。
+ * 它读的是同一套 per-novel 库，没有任何第二份数据路径。
+ *
+ * ── 两处与旧版的关键差别 ──
+ * 1. **不再自动建档**：小说必须已经在目录库里（书架页建，或 `POST /api/novels`）。
+ *    旧版会自动 createNovel，等于把 slug/标题的生成规则在这里又写了一份 ——
+ *    迟早和 HTTP 那边对不上，而且"跑一次就多一本空书"本身就是垃圾数据的来源。
+ * 2. **不再自己拼状态**：中心 Agent 的状态快照由 `novelStateSync` 每轮从库现推并注入
+ *    systemPrompt（见 SAgent/stateLite.ts），连书名/题材/文风都在里面。
+ *    这里再拼一份就是第二份真相源 —— 旧版的 renderState() 正是这么干的，已删。
+ *
+ * 旧版 import 了 7 个 `my-app/src/service/*`（那是另一个库）。那些已经全部去掉。
  */
+import { openCatalogDatabase } from "./storage/novelDatabase"
 import { createNovelSystem } from "./system"
-import { buildSAgentPrompt } from "./SAgent/prompt"
-
-import { createNovel, getNovelBySlug } from "./my-app/src/service/novelService"
-import { getCurrentWorld } from "./my-app/src/service/storyPlannerService"
-import { listCharacters } from "./my-app/src/service/characterService"
-import { listLocations } from "./my-app/src/service/locationService"
-import { getAnchor, listVolumeOutlines } from "./my-app/src/service/outlineService"
-import { listChapters, listPendingDemands } from "./my-app/src/service/chapterService"
-import { getProgress } from "./my-app/src/service/taskService"
 
 /* ==================== 参数 ==================== */
 
@@ -28,77 +29,33 @@ const argv = process.argv.slice(2)
 const slug = argv[0]?.trim()
 
 if (!slug) {
-  console.error("用法：bun agent/run.ts <slug> [要对 SAgent 说的话]")
+  console.error("用法：bun agent/run.ts <slug> [要对中心 Agent 说的话]")
   console.error("例：  bun agent/run.ts lianjiang-100 把第一卷大纲排出来")
   process.exit(1)
 }
 
 const userTurn = argv.slice(1).join(" ").trim() || "汇报一下当前进度，并告诉我下一步该做什么。"
 
-/* ==================== 小说 ==================== */
+/* ==================== 找小说（只认目录库） ==================== */
 
-const novel =
-  getNovelBySlug(slug) ??
-  createNovel({
-    slug,
-    title: slug,
-    genre: "",
-    style: "",
-  })
-
-console.log(`\n=== ${novel.title}（slug: ${novel.slug}｜id: ${novel.id}）===\n`)
-
-/* ==================== 拼当前状态 ==================== */
-
-/** 把库里的东西序列化成给 SAgent 看的"索引"。只放指针，不放全文。 */
-function renderState(): string {
-  const world = getCurrentWorld(novel.id)
-  const chars = listCharacters(novel.id)
-  const places = listLocations(novel.id)
-  const vols = listVolumeOutlines(novel.id)
-  const chapters = listChapters(novel.id)
-  const anchor = getAnchor(novel.id)
-  const demands = listPendingDemands(novel.id)
-  const progress = getProgress(novel.id)
-
-  return buildSAgentPrompt({
-    novel: [
-      `title: ${novel.title}`,
-      `genre: ${novel.genre || "未定"}`,
-      `style: ${novel.style || "未定"}`,
-      `status: ${novel.status}`,
-    ].join("\n"),
-
-    progress: [
-      `各阶段任务：${JSON.stringify(progress)}`,
-      `已写章节：${chapters.length} 章`,
-      `已建立卷：${vols.length} 卷`,
-    ].join("\n"),
-
-    anchors: anchor
-      ? [
-          `direction: ${JSON.stringify({
-            logline: anchor.logline,
-            theme: anchor.theme,
-            coreConflict: anchor.core_conflict,
-            endingDirection: anchor.ending_direction,
-          })}`,
-          `structure.type: ${anchor.structure_type}`,
-          `mainPlot: ${JSON.stringify(anchor.main_plot)}`,
-          `subplots: ${JSON.stringify(anchor.subplots)}`,
-          `（以上由第 ${anchor.locked_by_volume ?? 1} 卷定稿，后续卷必须逐字回填）`,
-        ].join("\n")
-      : "（尚未定稿——由第一卷的架构师输出确定）",
-
-    index: [
-      world ? `世界观：id=${world.id} version=${world.version} name=${world.name}` : "世界观：未建立",
-      `角色（${chars.length}）：${chars.map((c) => `${c.name}(id:${c.id},${c.role})`).join("、") || "无"}`,
-      `地点（${places.length}）：${places.map((p) => `${p.name}(id:${p.id})`).join("、") || "无"}`,
-      `章（${chapters.length}）：${chapters.map((c) => `第${c.idx}章《${c.title}》`).join("、") || "无"}`,
-      `待办需求（${demands.length}）：${demands.length ? JSON.stringify(demands) : "无"}`,
-    ].join("\n"),
-  })
+const catalog = openCatalogDatabase()
+let row: { id: number; slug: string; title: string } | null = null
+try {
+  row = catalog.query("SELECT id, slug, title FROM novels WHERE slug = ?").get(slug) as
+    | { id: number; slug: string; title: string }
+    | null
+} finally {
+  catalog.close()
 }
+
+if (!row) {
+  console.error(`目录库里没有 slug=${slug} 的小说。`)
+  console.error("先在书架页建一本，或：curl -X POST localhost:3000/api/novels -H 'Content-Type: application/json' -d '{\"slug\":\"...\",\"title\":\"...\"}'")
+  process.exit(1)
+}
+
+const novel = row
+console.log(`\n=== ${novel.title}（slug: ${novel.slug}｜id: ${novel.id}）===\n`)
 
 /* ==================== 跑 ==================== */
 
@@ -107,28 +64,21 @@ const system = createNovelSystem({ novelId: novel.id, slug: novel.slug })
 try {
   const result = await system.agent.invoke(
     {
-      // 状态种子：novelId 是 SAgent 推导状态的入口，必须一起带（见 system.ts 的 seed 注释）
+      // 状态种子：novelId 是 SAgent 从库推导状态的入口，必须一起带（见 system.ts 的 seed 注释）。
+      // 完整的【当前状态】由 novelStateSync 每轮注入，这里不重复拼。
       ...system.seed,
-      messages: [
-        {
-          role: "user",
-          content: `${renderState()}\n\n=== 作者的话 ===\n${userTurn}`,
-        },
-      ],
+      messages: [{ role: "user", content: userTurn }],
     },
     system.config,
   )
 
-  // 打印最后一条 assistant 消息
   const messages = (result as { messages?: unknown[] }).messages ?? []
   const last = messages[messages.length - 1] as { content?: unknown } | undefined
   const text =
     typeof last?.content === "string"
       ? last.content
       : Array.isArray(last?.content)
-        ? last.content
-            .map((p) => (typeof p === "string" ? p : ((p as { text?: string }).text ?? "")))
-            .join("")
+        ? last.content.map((p) => (typeof p === "string" ? p : ((p as { text?: string }).text ?? ""))).join("")
         : JSON.stringify(last?.content ?? null)
 
   console.log(text)

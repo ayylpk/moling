@@ -33,9 +33,19 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # Finder (MacOS) folder config
 .DS_Store
 
-# local database (schema is created at runtime by createDB.ts)
+# 本地数据（schema 由 novelDatabase.ts 在运行时建，数据不入库）
+# catalog.sqlite + 每本小说一个 resources/novels/<slug>/novel.sqlite + checkpoint
 resources/*.sqlite
 resources/*.sqlite-journal
+resources/*.sqlite-wal
+resources/*.sqlite-shm
+resources/novels/
+resources/checkpoints/
 
-# frontend verification screenshots (local evidence, not for repo)
+# 本地运行状态 / 编辑器配置（不是协作产物）
+.vscode/
+.workbuddy/
+
+# 前端验证截图与构建产物（本地证据，不入库）
 frontend-moling/.shots/
+frontend-moling/.build-check/
