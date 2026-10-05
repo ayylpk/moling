@@ -3,7 +3,7 @@ export type ChapterPolish = { text: string; report?: unknown }
 export type ChapterWorkflowInput = { novelId: number; chapterIdx: number; previous?: string; decisions?: string }
 export type ChapterSaveInput = ChapterDraft & { novelId: number; chapterIdx: number; stage: 'draft' | 'final'; polishReport?: unknown }
 export type ChapterClaimInput = ChapterWorkflowInput & { stage: 'chapter'; targetKey: string }
-export type ChapterWorkflowStep = { name: 'plan' | 'claim' | 'write' | 'save-draft' | 'polish' | 'save-final'; status: 'done' | 'skipped' }
+export type ChapterWorkflowStep = { name: 'plan' | 'claim' | 'write' | 'save-draft' | 'polish' | 'save-final' | 'finish'; status: 'done' | 'skipped' }
 export type ChapterWorkflowDeps = {
   plan(input: ChapterWorkflowInput): Promise<void>
   claim(input: ChapterClaimInput): Promise<{ action: 'run' | 'skip'; taskId: number }>
@@ -11,6 +11,7 @@ export type ChapterWorkflowDeps = {
   loadDraft?(input: ChapterWorkflowInput): Promise<ChapterDraft>
   polish(input: ChapterWorkflowInput & { draft: ChapterDraft }): Promise<ChapterPolish>
   save(input: ChapterSaveInput): Promise<void>
+  finish(input: { novelId: number; chapterIdx: number; taskId: number }): Promise<void>
   fail?(input: ChapterWorkflowInput & { taskId?: number; error: string }): Promise<void>
 }
 export type ChapterWorkflowResult = {
@@ -48,6 +49,9 @@ export const createChapterWorkflow = (deps: ChapterWorkflowDeps) => async (input
     steps.push({ name: 'polish', status: 'done' })
     await deps.save({ ...draft, ...polished, ...input, stage: 'final', polishReport: polished.report })
     steps.push({ name: 'save-final', status: 'done' })
+    if (taskId === undefined) throw new Error('章节任务缺少 taskId，无法收尾')
+    await deps.finish({ novelId: input.novelId, chapterIdx: input.chapterIdx, taskId })
+    steps.push({ name: 'finish', status: 'done' })
     return { ...input, taskId, status: 'done', finalText: polished.text, steps }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)

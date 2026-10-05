@@ -24,7 +24,7 @@ import { createWorld, getCurrentWorld, listWorldBriefs } from "../../my-app/src/
 import { createCharacter, getCharacter, listCharacters, replaceRelations } from "../../my-app/src/service/characterService"
 import { createLocation, listLocations, getTree } from "../../my-app/src/service/locationService"
 import { saveVolumeOutline, getAnchor, listVolumeOutlines, listDriftedVolumes } from "../../my-app/src/service/outlineService"
-import { listChapters, getChapterByIdx, saveChapterText, listPendingDemands } from "../../my-app/src/service/chapterService"
+import { listChapters, getChapterByIdx, getChapterText, saveChapterText, listPendingDemands } from "../../my-app/src/service/chapterService"
 import { getProgress, listTasks } from "../../my-app/src/service/taskService"
 import { recordDecision, listDecisionsByChapter, buildDecisionsText } from "../../my-app/src/service/actorDecisionService"
 import { getNovel } from "../../my-app/src/service/novelService"
@@ -247,6 +247,22 @@ export const saveChapterTextTool = tool(
   },
 )
 
+export const readChapterTextTool = tool(
+  async ({ chapterIdx, stage }, config) => {
+    const novelId = novelIdOf(config)
+    const chapter = getChapterByIdx(novelId, chapterIdx)
+    if (!chapter) throw new Error(`找不到第 ${chapterIdx} 章。`)
+    const text = getChapterText(chapter.id, stage as TextStage)
+    if (!text) throw new Error(`第 ${chapterIdx} 章没有 ${stage} 文本。`)
+    return pack(`第 ${chapterIdx} 章${stage === 'draft' ? '初稿' : '终稿'}`, text)
+  },
+  {
+    name: 'read_chapter_text',
+    description: '读取已有章节正文。章节任务可跳过时，中心 Agent 用它复用已有初稿，不重新调用执笔 Agent。',
+    schema: z.object({ chapterIdx: z.number().int().positive(), stage: z.enum(['draft', 'final']).default('draft') }),
+  },
+)
+
 export const saveDecision = tool(
   async ({ chapterIdx, characterName, choice, reason, line, customAnswer, promptHash }, config) => {
     const novelId = novelIdOf(config)
@@ -435,6 +451,7 @@ export const databaseTools = [
   saveLocation,
   saveVolumeOutlineTool,
   saveChapterTextTool,
+  readChapterTextTool,
   saveDecision,
   // 读取
   readIndex,
