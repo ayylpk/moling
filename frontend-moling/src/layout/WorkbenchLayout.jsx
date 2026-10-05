@@ -1,8 +1,9 @@
-import { createContext, useContext, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { NavLink, Outlet, Link, useLocation } from 'react-router-dom';
 import Seal from '../components/Seal.jsx';
 import Conversation from '../components/Conversation.jsx';
-import { NOVELS, TOPIC_OPTIONS, STYLE_OPTIONS, WORD_OPTIONS, initialPreferences } from '../lib/workbenchData.js';
+import { api } from '../api/client.js';
+import { TOPIC_OPTIONS, STYLE_OPTIONS, WORD_OPTIONS, initialPreferences } from '../lib/workbenchData.js';
 
 /**
  * 工作台双模式壳（10/4 重塑）：
@@ -54,12 +55,35 @@ export default function WorkbenchLayout() {
 
   const [topCollapsed, setTopCollapsed] = useState(true); // 规格行默认收起，顶栏只留一行
   const [chatCollapsed, setChatCollapsed] = useState(false);
-  const [novelId, setNovelId] = useState(NOVELS[0].id);
+  const [novels, setNovels] = useState([]);
+  const [novelsLoaded, setNovelsLoaded] = useState(false);
+  const [novelId, setNovelId] = useState(null);
   const [preferences, setPreferences] = useState(initialPreferences);
   const [saving, setSaving] = useState('saved');
 
-  const novel = NOVELS.find((item) => item.id === novelId) || NOVELS[0];
-  const value = useMemo(() => ({ novel, preferences, setPreferences, saving, setSaving }), [novel, preferences, saving]);
+  /**
+   * 小说列表是整壳的根（顶栏选书 / 书架 / 角色 / 书稿都要它）。
+   * 拉回来之前 novelId 是 null、派生出的 novel 也是 null —— 各页必须容忍这一态，
+   * 不要退回一个假的 id 去请求（旧实现写死 NOVELS[0].id = 1，请求必然 404）。
+   */
+  useEffect(() => {
+    let active = true;
+    api.listNovels()
+      .then((items) => {
+        if (!active || !Array.isArray(items)) return;
+        setNovels(items);
+        setNovelId((current) => current ?? items[0]?.id ?? null);
+      })
+      .catch(() => undefined)
+      .finally(() => { if (active) setNovelsLoaded(true); });
+    return () => { active = false; };
+  }, []);
+
+  const novel = novels.find((item) => item.id === novelId) || novels[0] || null;
+  const value = useMemo(
+    () => ({ novel, novels, novelsLoaded, setNovelId, setNovels, preferences, setPreferences, saving, setSaving }),
+    [novel, novels, novelsLoaded, preferences, saving],
+  );
 
   const toggleTopic = (topic) =>
     setPreferences((current) => ({
@@ -84,7 +108,7 @@ export default function WorkbenchLayout() {
               <span className="ws__brand-name">墨灵</span>
             </Link>
             <ModeSwitch />
-            <span className="ws__bar-book">《{novel.title}》· {novel.genre}</span>
+            <span className="ws__bar-book">{novel ? `《${novel.title}》· ${novel.genre || '未定题材'}` : '还没有书稿'}</span>
             <span className="ws__bar__spacer" />
             <SaveState saving={saving} />
           </header>
@@ -132,8 +156,13 @@ export default function WorkbenchLayout() {
               <ModeSwitch />
               <label className="wb__novel-select">
                 <span className="wb__top-label">当前小说</span>
-                <select value={novelId} onChange={(event) => setNovelId(Number(event.target.value))}>
-                  {NOVELS.map((item) => (
+                <select
+                  value={novelId ?? ''}
+                  disabled={novels.length === 0}
+                  onChange={(event) => setNovelId(Number(event.target.value))}
+                >
+                  {novels.length === 0 && <option value="">{novelsLoaded ? '还没有书稿' : '读取中…'}</option>}
+                  {novels.map((item) => (
                     <option value={item.id} key={item.id}>《{item.title}》</option>
                   ))}
                 </select>

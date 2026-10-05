@@ -1,6 +1,7 @@
 import { openCatalogDatabase, openNovelDatabase } from './novelDatabase'
 import { createMemoryStore, type MemoryRecord } from './memoryStore'
 import { createSiliconFlowEmbeddingClient } from './embedding'
+import { createWorldRuntime, type WorldInput } from '../SAgent/worldRuntime'
 
 type Novel = { id: number; slug: string; title: string; genre: string; style: string; description: string; logline: string; target_words: number; themes: string; status: string; created_at: string; updated_at: string }
 type NovelCreateBody = Partial<Omit<Novel, 'id' | 'created_at' | 'updated_at'>> & { themes?: string[] | string; target_words?: number }
@@ -39,6 +40,15 @@ const server = Bun.serve({
         }
         const catalog = openCatalogDatabase()
         try { const result = catalog.query('INSERT INTO novels (slug, title, genre, style, description, logline, target_words, themes, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(body.slug, body.title, body.genre ?? '', body.style ?? '', body.description ?? '', body.logline ?? '', targetWords, themes, body.status ?? 'draft'); const novel = catalog.query('SELECT * FROM novels WHERE id = ?').get(Number(result.lastInsertRowid)) as Novel; openNovelDatabase(novel.slug).close(); return json(novel, 201) } finally { catalog.close() }
+      }
+      if (parts[0] === 'api' && parts[1] === 'novels' && parts[2] && parts[3] === 'worlds') {
+        const novel = catalogNovel(Number(parts[2])); if (!novel) return bad('小说不存在', 404)
+        const database = openNovelDatabase(novel.slug)
+        try {
+          const runtime = createWorldRuntime(database)
+          if (request.method === 'GET') return json(runtime.list())
+          if (request.method === 'POST') return json(runtime.create(await request.json() as WorldInput), 201)
+        } finally { database.close() }
       }
       if (parts[0] === 'api' && parts[1] === 'novels' && parts[2] && parts[3] === 'chapters' && request.method === 'GET') {
         const novel = catalogNovel(Number(parts[2])); if (!novel) return bad('小说不存在', 404); const database = openNovelDatabase(novel.slug)
