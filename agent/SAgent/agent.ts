@@ -3,9 +3,9 @@
  *
  * ── 它是什么 ──
  * 唯一与作者对话的角色，也是唯一的编排者。
- * 手上是**落库/读取 + 记忆/画像 + 正文生成**这几组工具（见 ./tools/cleanIndex.ts 的那份清单）。
- * 生成类工具 —— 让角色/地点/大纲/裁决 agent 真正产出内容的那几个 —— 尚未挂到它手上，
- * 所以它现在只能把作者给的内容落库，不能自己生成那几类。
+ * 手上是**生成 + 落库/读取 + 记忆/画像**这几组工具（见 ./tools/cleanIndex.ts 的那份清单）。
+ * 角色 / 地点 / 大纲的生成工具已挂上；世界观生成与角色裁决生成**尚未迁**。
+ * 注意分工：生成类工具**不写库**，落库是中心 Agent 自己的决定（generate_* → 判断 → save_*）。
  * 注意：**所有工具都是它的**，只是有的还没接上；不存在"属于子 agent 的工具"。
  * 它自己不写一个字设定、大纲、正文——只决定这一步该谁做。
  *
@@ -40,7 +40,7 @@ import { createModel } from "../create_model"
 import { SAGENT_PROMPT } from "./prompt"
 import { COMPACT_PROMPT } from "./compact"
 import { NovelState, novelStateSync } from "./stateLite"
-import { memoryTools, portraitTools, generateChapterTool, worldTools, characterTools, locationTools, outlineTools, chapterOutlineTools, decisionTools } from "./tools/cleanIndex"
+import { memoryTools, portraitTools, generateChapterTool, worldTools, characterTools, locationTools, outlineTools, chapterOutlineTools, decisionTools, generateCharacter, generateLocation, generateOutline } from "./tools/cleanIndex"
 
 /* ==================== 可配常量 ==================== */
 
@@ -193,7 +193,13 @@ export function createSAgent(model: BaseChatModel = createModel(0.3)) {
     model,
     systemPrompt: SAGENT_PROMPT,
     tools: [
-      // 世界观 + per-novel 库的落库/读取（角色 / 地点 / 大纲卷 / 章纲 / 裁决）
+      // 生成类：调子 agent 产出内容，**不写库**（草案回到中心，采纳与否由它判断）
+      generateCharacter,
+      generateLocation,
+      generateOutline,
+      // 正文：一步到底（执笔 + 润色 + 落库），内部自己管任务表，不另暴露调度工具
+      generateChapterTool,
+      // 落库 / 读取：当前小说的 per-novel 库
       ...worldTools,
       ...characterTools,
       ...locationTools,
@@ -203,8 +209,6 @@ export function createSAgent(model: BaseChatModel = createModel(0.3)) {
       // 记忆与画像
       ...memoryTools,
       ...portraitTools,
-      // 正文：一步到底（执笔 + 润色 + 落库）
-      generateChapterTool,
     ],
     // 状态：小说创作该有的东西（阶段 / 进度 / 场上实体 / 待办 / 任务）
     // 它是**缓存**——真身在数据库，每次调模型前由 novelStateSync 重新推导，见 ./stateLite.ts
