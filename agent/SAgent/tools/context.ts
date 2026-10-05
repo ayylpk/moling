@@ -4,6 +4,7 @@ import type { RunnableConfig } from '@langchain/core/runnables'
 import { captureNovelEvent } from '../../storage/autoCapture'
 import type { L0Event } from '../../storage/portraitPipeline'
 import { openCatalogDatabase, openNovelDatabase } from '../../storage/novelDatabase'
+import { createWorldRuntime } from '../worldRuntime'
 
 /**
  * 工具的公共上下文 —— 「从 novelId 走到 per-novel 库」这一段只写一次。
@@ -20,25 +21,30 @@ import { openCatalogDatabase, openNovelDatabase } from '../../storage/novelDatab
  */
 
 /** 取当前小说。没有 novelId 就直接失败 —— 不要猜、不要回落到"第一本" */
-export const novelOf = (config?: RunnableConfig): { id: number; slug: string } => {
+export const novelOf = (config?: RunnableConfig): { id: number; slug: string; title: string; genre: string; style: string } => {
   const id = (config?.configurable as Record<string, unknown> | undefined)?.novelId
   if (typeof id !== 'number' || !Number.isInteger(id)) {
     throw new Error('缺少小说上下文：调用中心 Agent 时请在 config 里传 `configurable: { novelId }`。')
   }
   const catalog = openCatalogDatabase()
   try {
-    const novel = catalog.query('SELECT slug FROM novels WHERE id = ?').get(id) as { slug: string } | null
+    const novel = catalog.query('SELECT slug, title, genre, style FROM novels WHERE id = ?').get(id) as
+      | { slug: string; title: string; genre: string; style: string }
+      | null
     if (!novel) throw new Error(`小说不存在：novelId=${id}`)
-    return { id, slug: novel.slug }
+    return { id, slug: novel.slug, title: novel.title, genre: novel.genre, style: novel.style }
   } finally {
     catalog.close()
   }
 }
 
+/** 一本书在目录里的身份：id + slug + 写作时要用的元数据（style 会逐章注入） */
+export type NovelRef = ReturnType<typeof novelOf>
+
 /** 打开这本小说的库、执行 action、无论成败都关掉它 */
 export const withNovelDatabase = <T>(
   config: RunnableConfig | undefined,
-  action: (database: Database, novel: { id: number; slug: string }) => T,
+  action: (database: Database, novel: NovelRef) => T,
 ): T => {
   const novel = novelOf(config)
   const database = openNovelDatabase(novel.slug)
@@ -62,4 +68,38 @@ export const pack = (label: string, value: unknown): string =>
  */
 export const rememberNovelEvent = (novelId: number, event: Omit<L0Event, 'novelId'>): void => {
   void captureNovelEvent(novelId, event).catch(() => undefined)
+}
+
+/**
+ * 把 per-novel 库里的世界观渲染成**子 agent 看得懂的紧凑文本**。
+ *
+ * 三个生成工具（角色 / 地点 / 大纲）都要喂这一段，所以渲染格式只在这里定义一次 ——
+ * 两处各写一遍的话，迟早有一处的 rules 渲染漏掉「代价」，而"没有代价的规则就是外挂"
+ * 正是这套世界观设计的核心约束，漏掉等于把硬约束放空。
+ *
+ * 注意喂的是**硬约束**（rules 的三件套 / forbidden / terms），不是 JSON 结构：
+ * 子 agent 的提示词就是照这个形状写的（见 buildCharacterPrompt 等）。
+ * 库里没有世界观就直接抛 —— 不要让子 agent 在真空里编一套规则出来。
+ */
+export const renderWorld = (database: Database): string => {
+  const world = createWorldRuntime(database).current()
+  if (!world) {
+    throw new Error('这本小说还没有世界观。先用 save_world 把世界观落库 —— 角色/地点/大纲都以它为硬约束。')
+  }
+  const rules = (world.rules ?? []).map((rule, index) => `${index + 1}. ${rule.ability}｜代价：${rule.cost}｜界线：${rule.limit}`)
+  const names = (list: unknown[] | undefined): string[] =>
+    (list ?? []).map((item) => (item && typeof item === 'object' ? String((item as { name?: unknown }).name ?? '') : '')).filter(Boolean)
+  const factions = names(world.factions)
+  const places = names(world.places)
+  const terms = (world.terms ?? []).map((term) => term.name).filter(Boolean)
+  return [
+    `premise: ${world.premise}`,
+    'rules:',
+    ...(rules.length ? rules : ['  （无）']),
+    `factions: ${factions.length ? factions.join(' / ') : '（无）'}`,
+    `places: ${places.length ? places.join(' / ') : '（无）'}`,
+    `terms: ${terms.length ? terms.join(' / ') : '（无）'}`,
+    'forbidden:',
+    ...((world.forbidden ?? []).length ? (world.forbidden ?? []).map((item) => `- ${item}`) : ['- （无）']),
+  ].join('\n')
 }
