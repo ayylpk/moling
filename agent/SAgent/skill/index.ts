@@ -34,7 +34,7 @@ export const SAGENT_SKILL = `
 | 立世界观的硬规则（能力/代价/禁令/专名） | 世界观 agent | generate_world → 采纳后 save_world（**前置：无。整条链的起点**） |
 | 造一个人 | 角色 agent | generate_character → 采纳后 save_character（前置：世界观已落库） |
 | 造一个地方 | 地点 agent | generate_location → 采纳后 save_location（前置：世界观已落库、父级地名已存在） |
-| 排一卷大纲（约 50 章） | 架构师 agent | generate_outline → 采纳后 save_volume_outline，再逐章 save_chapter_outline（前置：世界观 + 本卷用到的角色卡都已落库） |
+| 排一卷大纲（约 50 章） | 架构师 agent | generate_outline → 采纳后 save_volume_outline，再用 save_chapter_outline **一次把这一卷的章纲落完**（前置：世界观 + 本卷用到的角色卡都已落库） |
 | 判断某个人在岔路口会怎么选 | 裁决 agent | generate_decision → 采纳后 save_actor_decision（前置：这个角色的卡已落库；只在真正的岔路口用） |
 | 把一章章纲写成正文 | 正文 + 润色 agent | generate_chapter（**一步到底，不用你分步**） |
 
@@ -50,7 +50,7 @@ export const SAGENT_SKILL = `
 4. **没有地点 → generate_location → 采纳后 save_location。**
 5. **全篇锚点定稿** —— 走 save_volume_outline（第一卷顺带把锚点定稿）。
 6. **建卷** —— 同一个 save_volume_outline。
-7. **建章纲** —— save_chapter_outline，一章一条、按章号顺序。
+7. **建章纲** —— save_chapter_outline，把这一卷的章纲**一次传进去落完**（也可以只传一条做单章重跑），按章号顺序。
 8. **generate_chapter(chapterIdx)** —— 一章一次。
 9. 第 8 步**内部**自己走完：登记任务 → 领任务 → 执笔 → 存 draft → 润色 → 存 final → 收尾。
    **这不是你要调的工具，也不要手工再来一遍。**
@@ -110,9 +110,12 @@ export const SAGENT_SKILL = `
 也不要把中间步骤交给作者 —— 那套任务表（plan / claim / finish / fail）是它的内部实现，
 **不是你、也不是作者的工具**。
 
-**一次一个**：generate_character / generate_location 一次一张卡，generate_decision 一次只问一个角色的一次抉择，
+**生成的规矩是「一次一个」**：generate_character / generate_location 一次一张卡，generate_decision 一次只问一个角色的一次抉择，
 generate_chapter 一次一章，generate_outline 一次一卷且必须用 range 分段。
 不要指望一次调用塞进去 50 章——那会撞输出上限，而且失败全丢。
+
+**落库不一样**：save_chapter_outline 一次可以落**一整卷**（生成贵、落库便宜，批量只是省往返）。
+某一条失败不会拖垮其余 —— 失败的那条连着原因回来，你单独补一条重跑即可。
 
 **还没挂给你的工具**（同样是"没接上"，不是"不属于你"）：
 让下游作废（invalidate）、清理中断残留的任务、角色关系网。

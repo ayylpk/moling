@@ -35,10 +35,17 @@ const writerPrompt = (novel: { title: string; genre: string; style: string }, ch
 本章章纲：${JSON.stringify(chapter)}
 只写本章，不新增设定，不提前解决结尾钩子。`
 
-const polisherPrompt = (novel: { title: string; style: string }, text: string): string => `你是墨灵的润色 Agent。只改善表达、节奏和用词，不改变事实、情节、人物关系、专名和正文长度结构。
+const polisherPrompt = (novel: { title: string; style: string }, text: string, retry = false): string => `你是墨灵的润色 Agent。只改善表达、节奏和用词，不改变事实、情节、人物关系、专名和正文长度结构。
 输出严格 JSON：{"text":"润色后的正文纯文本","changes":[{"kind":"用词","before":"原文","after":"改后"}]}
+
+★ changes 必须是真的动过的地方：before 是原文、after 是你改成的样子，**两者不能相同**。
+  没动过的地方不要列进来 —— 列一条 before === after 的，等于在报假账。
+★ 你的活是让它读起来不像机器写的：删掉解释性的收束句和段尾点题、把「他觉得 / 他意识到」这类
+  心理直述换成动作、拆散过于整齐的三段排比、去掉空泛的形容词堆叠。**必须真的动。**
+★ 但绝不改变事实、数字、时间、专名、人物关系；也不要把正文写长或写短一大截。
+
 小说：《${novel.title}》；文风：${novel.style}
-正文：\n${text}`
+正文：\n${text}${retry ? '\n\n★ 注意：你上一次一个字都没改，这不合格。这一遍必须真的动 —— 上面那几类机器味最重的地方，就是你要动的地方。' : ''}`
 
 const novelContext = (database: ReturnType<typeof openNovelDatabase>): string => {
   const world = database.query('SELECT name, premise, rules, terms, forbidden FROM worlds ORDER BY version DESC LIMIT 1').get()
@@ -77,9 +84,16 @@ export const generateChapterTool = tool(
         return { text: draft.text, summary: draft.summary, endsWith: draft.endsWith }
       },
       polish: async (input): Promise<ChapterPolish> => {
-        const value = jsonResponse(await polisher.invoke(polisherPrompt(novel, input.draft.text)))
+        const value = jsonResponse(await polisher.invoke(polisherPrompt(novel, input.draft.text, input.polishRetry === true)))
         if (typeof value.text !== 'string' || !value.text.trim()) throw new Error('润色 Agent 返回空正文')
-        return { text: value.text, report: Array.isArray(value.changes) ? value.changes : [] }
+        const changes = Array.isArray(value.changes) ? value.changes : []
+        // 空转条目不是改动：before 与 after 一样的那种从审计清单里去掉。
+        // 留着它们等于替模型把"我改了"这句话记进档案，而它其实一个字都没动。
+        const applied = changes.filter((c) => {
+          const item = (c ?? {}) as { before?: unknown; after?: unknown }
+          return String(item.before ?? '') !== String(item.after ?? '')
+        })
+        return { text: value.text, report: { changes: applied, droppedNoop: changes.length - applied.length } }
       },
       save: async (input) => {
         runtime.saveText(input.chapterIdx, { stage: input.stage, text: input.text, summary: input.summary, endsWith: input.endsWith, polishReport: input.polishReport })

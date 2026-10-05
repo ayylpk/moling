@@ -9,7 +9,8 @@ export type ChapterWorkflowDeps = {
   claim(input: ChapterClaimInput): Promise<{ action: 'run' | 'skip'; taskId: number }>
   write(input: ChapterWorkflowInput): Promise<ChapterDraft>
   loadDraft?(input: ChapterWorkflowInput): Promise<ChapterDraft>
-  polish(input: ChapterWorkflowInput & { draft: ChapterDraft }): Promise<ChapterPolish>
+  /** polishRetry = true 表示上一次调用一个字都没改，让实现把话说明白再要一次 */
+  polish(input: ChapterWorkflowInput & { draft: ChapterDraft; polishRetry?: boolean }): Promise<ChapterPolish>
   save(input: ChapterSaveInput): Promise<void>
   finish(input: { novelId: number; chapterIdx: number; taskId: number }): Promise<void>
   fail?(input: ChapterWorkflowInput & { taskId?: number; error: string }): Promise<void>
@@ -45,7 +46,21 @@ export const createChapterWorkflow = (deps: ChapterWorkflowDeps) => async (input
       steps.push({ name: 'save-draft', status: 'done' })
     }
 
-    const polished = await deps.polish({ ...input, draft })
+    // 润色必须真的改动正文。**这条不能只写在提示词里** —— 实测过：模型会返回一整份
+    // changes 清单，但每一条 before 与 after 一模一样，正文与初稿一字不差，
+    // 然后整条链一路 done。规则没有代码兜底时，那次"润色"就是纯空转，
+    // 而且不会报错，只会安静地交付一份没润过的稿子。
+    let polished = await deps.polish({ ...input, draft })
+    if (isNoop(draft.text, polished.text)) {
+      // 再要一次，并且告诉它上一次是空转（实现据此把要求说重）
+      polished = await deps.polish({ ...input, draft, polishRetry: true })
+    }
+    if (isNoop(draft.text, polished.text)) {
+      throw new Error(
+        '润色空转：两次调用都没有改动正文，初稿与终稿完全一致。' +
+          '拒绝把没润过的稿子当作终稿交付 —— 请重跑，或检查润色模型/提示词。',
+      )
+    }
     steps.push({ name: 'polish', status: 'done' })
     await deps.save({ ...draft, ...polished, ...input, stage: 'final', polishReport: polished.report })
     steps.push({ name: 'save-final', status: 'done' })
@@ -66,3 +81,6 @@ const requireDraft = async (loadDraft: ChapterWorkflowDeps['loadDraft'], input: 
   if (!draft.text.trim()) throw new Error('任务已存在但初稿为空')
   return draft
 }
+
+/** 只比首尾空白之外的差异：仅仅多加几个空格不算改过（那同样是空转） */
+const isNoop = (before: string, after: string): boolean => before.trim() === after.trim()

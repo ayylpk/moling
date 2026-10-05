@@ -5,72 +5,106 @@ import { createChapterRuntime, type ChapterOutlineInput } from '../chapterRuntim
 import { pack, rememberNovelEvent, withNovelDatabase } from './context'
 
 /**
- * 章纲工具 —— 一章一条，逐条落。
+ * 章纲工具 —— 一次可以落**一条**，也可以落**一整卷**。
  *
- * 为什么不做批量：一卷 50 章塞一次调用，参数巨大、失败全丢、还没法针对单章重跑。
- * 逐条落之后，重跑第 12 章不会碰到其他章。
+ * 早先只收单条，理由是「一卷 50 章塞一次调用，失败全丢」。那个风险是真的，
+ * 所以这里不是简单地把参数放开成数组：**每一条各自提交、各自兜错** ——
+ * 第 37 章撞了章号，前 36 章照样留在库里，失败的那条连同原因一起回到中心手上。
+ * 逐条落的能力没有丢：传一条数组就是单章重跑，重跑第 12 章不会碰别的章。
+ *
+ * 章号是**全篇连续**的，不是卷内重开 —— 落错卷会撞 UNIQUE(idx)。
  */
 export const saveChapterOutline = tool(
-  async (input, config) =>
+  async ({ volume_no, chapters }, config) =>
     withNovelDatabase(config, (database, novel) => {
       const runtime = createChapterRuntime(database)
-      const volume = runtime.getVolumeByNo(input.volume_no)
-      if (!volume) throw new Error(`第 ${input.volume_no} 卷还没建档：先调 save_volume_outline 把卷落下来。`)
+      const volume = runtime.getVolumeByNo(volume_no)
+      if (!volume) throw new Error(`第 ${volume_no} 卷还没建档：先调 save_volume_outline 把卷落下来。`)
 
-      const saved = runtime.saveChapterOutline(volume.id, {
-        index: input.index,
-        title: input.title,
-        goal: input.goal,
-        conflict: input.conflict,
-        hook: input.hook,
-        emotion: input.emotion,
-        summary: input.summary,
-        place: input.place,
-        characters: input.characters,
-        wordCountTarget: input.word_count_target,
-      } as ChapterOutlineInput)
+      const saved: Array<{ idx: number; chapterId: number; created: boolean; place: string | null; cast: { total: number; resolved: number; unresolved: string[] } }> = []
+      const failed: Array<{ index: number; error: string }> = []
 
-      const unresolved = saved.cast.filter((c) => c.characterId === null).map((c) => c.raw)
+      for (const item of chapters) {
+        try {
+          const result = runtime.saveChapterOutline(volume.id, {
+            index: item.index,
+            title: item.title,
+            goal: item.goal,
+            conflict: item.conflict,
+            hook: item.hook,
+            emotion: item.emotion,
+            summary: item.summary,
+            place: item.place,
+            characters: item.characters,
+            wordCountTarget: item.word_count_target,
+          } as ChapterOutlineInput)
 
-      rememberNovelEvent(novel.id, {
-        title: `第${saved.chapter.idx}章章纲`,
-        content: JSON.stringify(saved.chapter),
-        sourceType: 'chapter_outline',
-        sourceId: `chapter:${saved.chapter.id}:outline`,
-        volumeId: volume.id,
-        chapterId: saved.chapter.id,
-      })
+          const unresolved = result.cast.filter((c) => c.characterId === null).map((c) => c.raw)
+          saved.push({
+            idx: result.chapter.idx,
+            chapterId: result.chapter.id,
+            created: result.created,
+            place: result.chapter.placeRaw,
+            cast: { total: result.cast.length, resolved: result.cast.length - unresolved.length, unresolved },
+          })
 
-      return pack(`${saved.created ? '章纲已落库' : '章纲已更新'}｜第 ${saved.chapter.idx} 章（chapter_id:${saved.chapter.id}）`, {
-        chapterId: saved.chapter.id,
-        idx: saved.chapter.idx,
-        volume_no: volume.no,
-        created: saved.created,
-        place: saved.chapter.placeRaw,
-        cast: { total: saved.cast.length, resolved: saved.cast.length - unresolved.length, unresolved },
-      })
+          rememberNovelEvent(novel.id, {
+            title: `第${result.chapter.idx}章章纲`,
+            content: JSON.stringify(result.chapter),
+            sourceType: 'chapter_outline',
+            sourceId: `chapter:${result.chapter.id}:outline`,
+            volumeId: volume.id,
+            chapterId: result.chapter.id,
+          })
+        } catch (error) {
+          // 这一条失败不该带走其余各条 —— 它们已经落好了，回滚它们只会把好数据扔掉
+          failed.push({ index: item.index, error: error instanceof Error ? error.message : String(error) })
+        }
+      }
+
+      const 待办 = saved.flatMap((c) => c.cast.unresolved.map((raw) => ({ idx: c.idx, raw })))
+
+      return pack(
+        `第 ${volume.no} 卷章纲：落库 ${saved.length} 条${failed.length ? `，失败 ${failed.length} 条` : ''}`,
+        {
+          volume_no: volume.no,
+          请求: chapters.length,
+          已落: saved.map((c) => ({ idx: c.idx, chapter_id: c.chapterId, created: c.created })),
+          失败: failed,
+          待办: 待办.length === 0 ? [] : 待办,
+        },
+      )
     }),
   {
     name: 'save_chapter_outline',
     description:
-      '落**一条**章纲，返回 chapter_id。一章一条、按章号顺序落。' +
+      '落章纲，**一次可以传一条，也可以传一整卷**（一卷约 50 章就是一次调用），返回每一章的 chapter_id。' +
       '★ volume_no 是卷号（不是 volume_id），卷必须先由 save_volume_outline 建好。' +
+      '★ 章号 index 是**全篇连续**的，不是卷内重开。' +
       '★ characters 里写**角色名字**；需要一个还不存在的角色时写 `NEW:戏剧功能`，不要现编名字 —— 那样会绕过"先建卡再出场"的约束。' +
       `★ place 同理：已有地名直接写，新地点写 NEW:戏剧功能。` +
-      '★ 返回里的 cast.unresolved 就是"这一章点名了、但人/地还没建"的清单，接着去 save_character / save_location 把它补上。' +
+      '★ **某一条失败不会影响其余各条**：失败的那条连原因一起回到「失败」里，你据此单独补一条重跑即可，不用整卷重来。' +
+      '★ 返回里的「待办」就是"点名了、但人/地还没建"的清单，接着去 save_character / save_location 把它补上。' +
       '★ 同一章重跑是更新（整条覆盖），不会堆出第二条；也不会动已写的正文。',
     schema: z.object({
       volume_no: z.number().int().positive().describe('第几卷。'),
-      index: z.number().int().positive().describe('章号（全篇连续，不回卷内重开）。'),
-      title: z.string().min(1),
-      goal: z.string().optional().describe('本章目标。'),
-      conflict: z.string().optional().describe('本章冲突。'),
-      hook: z.string().optional().describe('结尾钩子。'),
-      emotion: z.string().optional().describe('情绪走向。'),
-      summary: z.string().optional().describe('本章概要。'),
-      place: z.string().optional().describe('发生地：已有地名，或 `NEW:戏剧功能`。'),
-      characters: z.array(z.string()).optional().describe('出场角色名，或 `NEW:戏剧功能`。'),
-      word_count_target: z.number().int().positive().optional().describe('目标字数，缺省 3000。'),
+      chapters: z
+        .array(
+          z.object({
+            index: z.number().int().positive().describe('章号（全篇连续，不回卷内重开）。'),
+            title: z.string().min(1),
+            goal: z.string().optional().describe('本章目标。'),
+            conflict: z.string().optional().describe('本章冲突。'),
+            hook: z.string().optional().describe('结尾钩子。'),
+            emotion: z.string().optional().describe('情绪走向。'),
+            summary: z.string().optional().describe('本章概要。'),
+            place: z.string().optional().describe('发生地：已有地名，或 `NEW:戏剧功能`。'),
+            characters: z.array(z.string()).optional().describe('出场角色名，或 `NEW:戏剧功能`。'),
+            word_count_target: z.number().int().positive().optional().describe('目标字数，缺省 3000。'),
+          }),
+        )
+        .min(1)
+        .describe('要落的章纲。传一条 = 单章落库/重跑；传一整卷 = 一次落完。'),
     }),
   },
 )
