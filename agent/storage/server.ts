@@ -7,7 +7,7 @@ import { createLocationRuntime, type LocationInput } from '../SAgent/locationRun
 import { createOutlineRuntime, type AnchorInput, type VolumeOutlineInput } from '../SAgent/outlineRuntime'
 import { createChapterRuntime, type ChapterOutlinePatch } from '../SAgent/chapterRuntime'
 import { createSAgent } from '../SAgent'
-import { readWorkflowStatus } from './workflowStatus'
+import { readWorkflowStatus, readWorkflowSummary } from './workflowStatus'
 
 type Novel = { id: number; slug: string; title: string; genre: string; style: string; description: string; logline: string; target_words: number; themes: string; status: string; created_at: string; updated_at: string }
 type NovelCreateBody = Partial<Omit<Novel, 'id' | 'created_at' | 'updated_at'>> & { themes?: string[] | string; target_words?: number }
@@ -136,6 +136,12 @@ const server = Bun.serve({
           return json(database.query(`SELECT p.*, c.name AS character_name FROM character_portraits p LEFT JOIN characters c ON c.id = p.character_id WHERE p.version = (SELECT max(p2.version) FROM character_portraits p2 WHERE p2.novel_id = p.novel_id AND p2.character_id = p.character_id) ORDER BY p.character_id`).all())
         } finally { database.close() }
       }
+      /* ==================== 工作流摘要 ==================== */
+      if (parts[0] === 'api' && parts[1] === 'novels' && parts[2] && parts[3] === 'workflow' && request.method === 'GET') {
+        // 只回简化结构（阶段 + 各阶段计数），不回 generation_tasks 的原始字段 —— 那是内部实现
+        return withNovelDb(parts[2], (_novel, database) => json(readWorkflowSummary(database)))
+      }
+
       /* ==================== 角色 ==================== */
       if (parts[0] === 'api' && parts[1] === 'novels' && parts[2] && parts[3] === 'characters') {
         const characterId = parts[4]

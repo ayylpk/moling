@@ -24,6 +24,7 @@ export {
   NovelState,
   INITIAL_NOVEL_STATE,
   PHASE_ORDER,
+  phaseOf,
   deriveNovelState,
   renderStateBlock,
   novelStateSync,

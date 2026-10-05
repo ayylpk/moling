@@ -4,6 +4,23 @@ import { openCatalogDatabase, openNovelDatabase } from '../storage/novelDatabase
 export type Phase = 'init' | 'world' | 'cast' | 'outline' | 'prose' | 'polish' | 'done'
 export const PHASE_ORDER: Phase[] = ['init', 'world', 'cast', 'outline', 'prose', 'polish', 'done']
 
+/**
+ * 「这本小说走到哪一步了」——**全项目只有这一个判据**。
+ *
+ * 中心 Agent 的状态快照和 storage 的 /workflow 接口都要回答这个问题。
+ * 各写一份的话，两边迟早给出不同的阶段（页面说"正在整理大纲"、Agent 说"还没世界观"），
+ * 而那种不一致没人能一眼看出是谁错了。
+ *
+ * 按「缺什么往后退」推：没世界观 → init；没卷 → world；没章 → outline；有定稿 → polish；否则 prose。
+ */
+export const phaseOf = (input: { hasWorld: boolean; volumes: number; chapters: number; finalized: number }): Phase => {
+  if (!input.hasWorld) return 'init'
+  if (input.volumes === 0) return 'world'
+  if (input.chapters === 0) return 'outline'
+  if (input.finalized > 0) return 'polish'
+  return 'prose'
+}
+
 export const NovelState = Annotation.Root({
   messages: MessagesAnnotation.spec.messages,
   novelId: Annotation<number | null>,
@@ -94,7 +111,7 @@ export const deriveNovelState = (novelId: number): Omit<NovelStateValue, 'novelI
     const finalized = database.query("SELECT c.idx FROM chapters c JOIN chapter_texts t ON t.chapter_id = c.id WHERE t.stage = 'final' ORDER BY c.idx").all() as Array<{ idx: number }>
     const chapters = database.query('SELECT idx FROM chapters ORDER BY idx').all() as Array<{ idx: number }>
     const tasks = database.query("SELECT stage, target_key FROM generation_tasks WHERE status = 'done'").all() as Array<{ stage: string; target_key: string }>
-    const phase: Phase = world === null ? 'init' : volumes.length === 0 ? 'world' : chapters.length === 0 ? 'outline' : finalized.length > 0 ? 'polish' : 'prose'
+    const phase = phaseOf({ hasWorld: world !== null, volumes: volumes.length, chapters: chapters.length, finalized: finalized.length })
     const written = finalized.length > 0 ? finalized : drafted
     return {
       title: novel.title,

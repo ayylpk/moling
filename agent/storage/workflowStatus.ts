@@ -19,6 +19,7 @@
  * 页面也不画 —— 摆一个假数比空着更糟。
  */
 import type { Database } from 'bun:sqlite'
+import { phaseOf, type Phase } from '../SAgent'
 
 export type LampState = 'done' | 'running' | 'idle' | 'failed'
 
@@ -215,4 +216,92 @@ export const readWorkflowStatus = (database: Database): WorkflowStatus => {
   }
 
   return { nodes, hub }
+}
+
+/* ==================== 简化摘要（给 /api/novels/:id/workflow） ==================== */
+
+export type StageCounts = { total: number; done: number; running: number; failed: number; pending: number }
+export type WorkflowStage = 'world' | 'character' | 'location' | 'outline' | 'chapter' | 'polish'
+
+export type WorkflowSummary = {
+  phase: Phase
+  /** 给页面直接显示的一句话，例如「正在整理大纲」 */
+  label: string
+  total: number
+  done: number
+  running: number
+  failed: number
+  byStage: Record<WorkflowStage, StageCounts>
+}
+
+const WORKFLOW_STAGES: WorkflowStage[] = ['world', 'character', 'location', 'outline', 'chapter', 'polish']
+
+const PHASE_LABEL: Record<Phase, string> = {
+  init: '还没有世界观',
+  world: '正在建立世界观',
+  cast: '正在建立角色与地点',
+  outline: '正在整理大纲',
+  prose: '正在写正文',
+  polish: '正在润色',
+  done: '已完稿',
+}
+
+const emptyCounts = (): StageCounts => ({ total: 0, done: 0, running: 0, failed: 0, pending: 0 })
+
+/**
+ * 工作流摘要 —— 给前端的**简化**结构。
+ *
+ * 存在的理由是「不要把原始字段整包丢给前端」：`generation_tasks` 里有 target_key /
+ * input_hash / artifact_path / attempt / error 这些**内部实现**，前端一个都不该看见 ——
+ * 看见了就会有人拿它做判断，然后任务表的语义被前端固化下来，以后改不动。
+ * 这里只输出"每个阶段有多少、成了多少、在跑几条、折了几条"，外加一句人话的 label。
+ *
+ * phase 的判据与中心 Agent 的状态快照**共用同一个函数**（phaseOf），
+ * 免得页面和 Agent 对"走到哪一步"各说一套。
+ */
+export const readWorkflowSummary = (database: Database): WorkflowSummary => {
+  const rows = database
+    .query(
+      `SELECT stage,
+              count(*)                                            AS total,
+              sum(CASE WHEN status = 'done'    THEN 1 ELSE 0 END) AS done,
+              sum(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running,
+              sum(CASE WHEN status = 'failed'  THEN 1 ELSE 0 END) AS failed,
+              sum(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending
+         FROM generation_tasks GROUP BY stage`,
+    )
+    .all() as Array<{ stage: string } & StageCounts>
+
+  const byStage = Object.fromEntries(WORKFLOW_STAGES.map((stage) => [stage, emptyCounts()])) as Record<WorkflowStage, StageCounts>
+  for (const row of rows) {
+    if (!WORKFLOW_STAGES.includes(row.stage as WorkflowStage)) continue
+    byStage[row.stage as WorkflowStage] = {
+      total: num(row.total),
+      done: num(row.done),
+      running: num(row.running),
+      failed: num(row.failed),
+      pending: num(row.pending),
+    }
+  }
+
+  const sum = (pick: (counts: StageCounts) => number): number =>
+    WORKFLOW_STAGES.reduce((total, stage) => total + pick(byStage[stage]), 0)
+
+  const countOf = (sql: string): number => num((database.query(sql).get() as { c: number | null } | null)?.c)
+  const phase = phaseOf({
+    hasWorld: countOf('SELECT count(*) AS c FROM worlds') > 0,
+    volumes: countOf('SELECT count(*) AS c FROM volumes'),
+    chapters: countOf('SELECT count(*) AS c FROM chapters'),
+    finalized: countOf("SELECT count(*) AS c FROM chapter_texts WHERE stage = 'final'"),
+  })
+
+  return {
+    phase,
+    label: PHASE_LABEL[phase],
+    total: sum((counts) => counts.total),
+    done: sum((counts) => counts.done),
+    running: sum((counts) => counts.running),
+    failed: sum((counts) => counts.failed),
+    byStage,
+  }
 }
