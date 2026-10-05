@@ -1,12 +1,31 @@
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { useWorkbench } from '../layout/WorkbenchLayout.jsx';
+import { api } from '../api/client.js';
 
 /**
  * 对话栏：中心 Agent「灵」的单通道，只在「执笔」模式出现（右侧纸色柱）。
  * 收起后剩 48px 竖轨，按钮变竖排「展开对话」。
- * 消息/请示为壳期静态内容，接 WS/轮询后只换数据源不动版式。
+ * 消息通过 storage API 转交中心 Agent；ask-human 只有 Agent 真正提出时再展示。
  */
 export default function Conversation({ collapsed, onToggle }) {
-  const navigate = useNavigate();
+  const { novel } = useWorkbench();
+  const [messages, setMessages] = useState([]);
+  const [draft, setDraft] = useState('');
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => { setMessages([]); setDraft(''); setError(''); }, [novel?.id]);
+  const send = async (event) => {
+    event.preventDefault();
+    const message = draft.trim();
+    if (!novel || !message || sending) return;
+    const next = [...messages, { role: 'user', content: message }];
+    setMessages(next); setDraft(''); setError(''); setSending(true);
+    try {
+      const result = await api.chat(novel.id, message, messages);
+      setMessages([...next, { role: 'assistant', content: result.message || '中心 Agent 没有返回内容。' }]);
+    } catch (cause) { setError(cause.message || '中心 Agent 暂时无法连接。'); }
+    finally { setSending(false); }
+  };
 
   return (
     <aside className={`ws__chat${collapsed ? ' is-collapsed' : ''}`}>
@@ -27,43 +46,19 @@ export default function Conversation({ collapsed, onToggle }) {
       {!collapsed && (
         <>
           <div className="conversation__context">
-            <span className="status is-writing">正在协调</span>
-            <strong>第 2 章 · 情绪曲线</strong>
-            <span className="anno">在编子任务 3 · 上下文 148k / 256k</span>
+            <span className="status is-writing">{novel ? '已连接' : '等待选书'}</span>
+            <strong>{novel ? `《${novel.title}》` : '请先创建或选择一本小说'}</strong>
+            <span className="anno">中心 Agent 自动负责后续编排</span>
           </div>
 
           <div className="conversation__messages">
-            <div className="conversation__message is-agent">
-              <span className="conversation__message-label">中心 Agent · 刚刚</span>
-              <p>角色弧线已经接上了。第 2 章的情绪曲线需要你确认，我会根据选择继续安排写作。</p>
-            </div>
-            <div className="conversation__message is-system">
-              <span className="conversation__message-label">系统记录</span>
-              <p>角色 Agent 已完成 2 / 4 张卡片，写作 Agent 等待输入。</p>
-            </div>
-            <div className="conversation__message is-user">
-              <span className="conversation__message-label">你 · 10:42</span>
-              <p>先保留林晚的沉默。</p>
-            </div>
+            {messages.length === 0 && <div className="conversation__message is-system"><span className="conversation__message-label">使用说明</span><p>直接告诉中心 Agent 你想写什么。世界观、角色、大纲和章节由它按流程处理。</p></div>}
+            {messages.map((item, index) => <div className={`conversation__message is-${item.role === 'user' ? 'user' : 'agent'}`} key={`${item.role}-${index}`}><span className="conversation__message-label">{item.role === 'user' ? '你' : '中心 Agent'}</span><p>{item.content}</p></div>)}
+            {sending && <div className="conversation__message is-system"><span className="conversation__message-label">中心 Agent</span><p>正在读取小说状态并安排下一步……</p></div>}
           </div>
 
-          <div className="conversation__ask">
-            <div className="conversation__ask-head">
-              <span className="status is-paused">需要你的决定</span>
-              <span className="anno">ask-human · 1</span>
-            </div>
-            <h3>林晚在坡道下如何回应？</h3>
-            <p>这个选择会影响第 2 章的冲突强度和角色关系。</p>
-            <div className="conversation__choices">
-              <button type="button" onClick={() => navigate('/w/plot')}>A　继续沉默</button>
-              <button type="button" onClick={() => navigate('/w/plot')}>B　主动提问</button>
-            </div>
-          </div>
-
-          <div className="conversation__composer">
-            <textarea placeholder="告诉中心 Agent 下一步怎么做…" />
-            <button type="button" className="btn btn--primary">发送指令</button>
-          </div>
+          {error && <p className="conversation__error">{error}</p>}
+          <form className="conversation__composer" onSubmit={send}><textarea value={draft} onChange={(event) => setDraft(event.target.value)} disabled={!novel || sending} placeholder={novel ? '告诉中心 Agent 下一步怎么做…' : '先在书架创建一本小说'} /><button type="submit" className="btn btn--primary" disabled={!novel || !draft.trim() || sending}>{sending ? '处理中…' : '发送指令'}</button></form>
         </>
       )}
     </aside>

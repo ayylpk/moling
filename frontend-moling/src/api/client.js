@@ -31,6 +31,7 @@ export const api = {
   /* ==================== 世界观 ==================== */
   listWorlds: (novelId) => request(`/api/novels/${novelId}/worlds`),
   createWorld: (novelId, world) => request(`/api/novels/${novelId}/worlds`, { method: 'POST', body: JSON.stringify(world) }),
+  chat: (novelId, message, history) => request(`/api/novels/${novelId}/chat`, { method: 'POST', body: JSON.stringify({ message, history }) }),
 
   /* ==================== 章与正文 ==================== */
   /** 一本书的全部章节：id/idx/title/volume_id/goal/conflict/hook/emotion/summary/textStage */

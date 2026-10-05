@@ -2,6 +2,7 @@ import { openCatalogDatabase, openNovelDatabase } from './novelDatabase'
 import { createMemoryStore, type MemoryRecord } from './memoryStore'
 import { createSiliconFlowEmbeddingClient } from './embedding'
 import { createWorldRuntime, type WorldInput } from '../SAgent/worldRuntime'
+import { createSAgent } from '../SAgent'
 
 type Novel = { id: number; slug: string; title: string; genre: string; style: string; description: string; logline: string; target_words: number; themes: string; status: string; created_at: string; updated_at: string }
 type NovelCreateBody = Partial<Omit<Novel, 'id' | 'created_at' | 'updated_at'>> & { themes?: string[] | string; target_words?: number }
@@ -10,6 +11,7 @@ const bad = (message: string, status = 400) => json({ message }, status)
 const catalogNovel = (id: number): Novel | null => { const database = openCatalogDatabase(); try { return database.query('SELECT * FROM novels WHERE id = ?').get(id) as Novel | null } finally { database.close() } }
 const listNovels = (): Novel[] => { const database = openCatalogDatabase(); try { return database.query('SELECT * FROM novels ORDER BY updated_at DESC, id DESC').all() as Novel[] } finally { database.close() } }
 const embeddingClient = createSiliconFlowEmbeddingClient()
+const chatAgents = new Map<number, ReturnType<typeof createSAgent>>()
 const embedOrUndefined = async (input: string): Promise<number[] | undefined> => { try { return (await embeddingClient.embed([input]))[0] } catch (error) { console.warn(error instanceof Error ? error.message : error); return undefined } }
 
 const server = Bun.serve({
@@ -49,6 +51,18 @@ const server = Bun.serve({
           if (request.method === 'GET') return json(runtime.list())
           if (request.method === 'POST') return json(runtime.create(await request.json() as WorldInput), 201)
         } finally { database.close() }
+      }
+      if (parts[0] === 'api' && parts[1] === 'novels' && parts[2] && parts[3] === 'chat' && request.method === 'POST') {
+        const novel = catalogNovel(Number(parts[2])); if (!novel) return bad('小说不存在', 404)
+        const body = await request.json() as { message?: string; history?: Array<{ role: 'user' | 'assistant'; content: string }> }
+        if (!body.message?.trim()) return bad('消息不能为空')
+        const history = Array.isArray(body.history) ? body.history.filter((item) => (item.role === 'user' || item.role === 'assistant') && typeof item.content === 'string').slice(-24) : []
+        const agent = chatAgents.get(novel.id) ?? createSAgent()
+        chatAgents.set(novel.id, agent)
+        const result = await agent.invoke({ novelId: novel.id, slug: novel.slug, messages: [...history, { role: 'user', content: body.message.trim() }] }, { configurable: { novelId: novel.id } })
+        const messages = (result as { messages?: Array<{ getType?: () => string; content?: unknown }> }).messages ?? []
+        const answer = [...messages].reverse().find((item) => item.getType?.() === 'ai' || typeof item.content === 'string')?.content
+        return json({ message: typeof answer === 'string' ? answer : JSON.stringify(answer ?? '中心 Agent 暂无回复') })
       }
       if (parts[0] === 'api' && parts[1] === 'novels' && parts[2] && parts[3] === 'chapters' && request.method === 'GET') {
         const novel = catalogNovel(Number(parts[2])); if (!novel) return bad('小说不存在', 404); const database = openNovelDatabase(novel.slug)
