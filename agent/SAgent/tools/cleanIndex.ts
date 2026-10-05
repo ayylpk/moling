@@ -7,10 +7,11 @@
  *
  * 注意同目录下还有几个**不在这里出口**、也**不许再被 import** 的文件：
  *   · tools/database.ts  —— 走 agent/my-app 的服务、写 resources/myapp.sqlite，已作废
- *   · tools/subagents.ts —— 调子 agent 的那一套，尚未接入（阶段 2 只做落库/读取）
+ *   · tools/subagents.ts —— 中心 Agent 的**生成类工具**（让角色/地点/大纲/裁决 agent 产出内容），尚未挂载
  *   · tools/tasks.ts     —— 断点续跑的手工侧，generate_chapter 内部已自带
  *   · tools/index.ts     —— 旧出口，里面的 export * from './chapter' 指向不存在的文件
  * 它们是迁移参考，不是运行时依赖。（清理只能 mv 隔离，本机不许删。）
+ * 口径提醒：**没有"子 agent 的工具"**——上面这些挂了都是中心 Agent 的工具，只是有的还没接。
  */
 export * from './memory'
 export * from './portrait'
