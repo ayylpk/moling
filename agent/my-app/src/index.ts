@@ -40,6 +40,7 @@ export * as workflow from './controller/workflowController'
 export * as memory from './controller/memoryController'
 export * as catalog from './controller/catalogController'
 export * as state from './controller/stateController'
+export * as writing from './controller/writingController'
 
 // ── 目录库（书架） ──
 // 目录级元数据不属于任何一本书，所以没有 novelId 可言，是它自己的一层。
@@ -69,3 +70,4 @@ export type { VolumeOutlineBundle, ChapterOutlineSaveReport } from './service/en
 export type { WorkflowSummary, StageCounts, WorkflowStage } from './service/workflowService'
 export type { ChapterContext } from './controller/chapterController'
 export type { NovelStateSnapshot } from './controller/stateController'
+export type { WritingBrief, CastSheet, PlaceSheet } from './controller/writingController'

@@ -1,45 +1,23 @@
 import { tool } from 'langchain'
 import type { RunnableConfig } from '@langchain/core/runnables'
 import * as z from 'zod'
+import { chapter as chapterApi, writing as writingApi, type ChapterContext, type ChapterOutline } from '../../my-app'
 import { createModel } from '../../create_model'
-import { chapter as chapterApi, character as characterApi, world as worldApi, type ChapterContext, type ChapterOutline } from '../../my-app'
+import { createWriterAgent } from '../../writer/agent'
+import { buildWriterPrompt } from '../../writer/prompt'
+import { createPolisherAgent } from '../../Polisher/agent'
+import { buildPolisherPrompt } from '../../Polisher/prompt'
 import { createChapterWorkflow, type ChapterDraft, type ChapterPolish } from '../chapterWorkflow'
 import { novelIdOf, novelOf } from './context'
 
-const modelText = (response: unknown): string => {
-  if (typeof response === 'string') return response
-  if (response && typeof response === 'object' && 'content' in response) return String((response as { content: unknown }).content)
-  return String(response ?? '')
-}
-
-const jsonResponse = (response: unknown): Record<string, unknown> => {
-  const text = modelText(response).replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim()
-  const start = text.indexOf('{'); const end = text.lastIndexOf('}')
-  if (start < 0 || end <= start) throw new Error('模型没有返回 JSON 对象')
-  return JSON.parse(text.slice(start, end + 1)) as Record<string, unknown>
-}
-
-const writerPrompt = (novel: { title: string; genre: string; style: string }, chapter: ChapterOutline, previous: string, decisions: string, context: string): string => `你是墨灵的执笔 Agent，只写一章中文小说正文。
-输出严格 JSON：{"text":"正文纯文本","summary":"本章发生了什么","endsWith":"结尾状态"}，不要 Markdown，不要解释。
-小说：《${novel.title}》；题材：${novel.genre}；文风：${novel.style}
-世界与角色资料：${context}
-前情：${previous || '这是开篇，没有前情。'}
-角色裁决：${decisions || '无'}
-本章章纲：${JSON.stringify(chapter)}
-只写本章，不新增设定，不提前解决结尾钩子。`
-
-const polisherPrompt = (novel: { title: string; style: string }, text: string, retry = false): string => `你是墨灵的润色 Agent。只改善表达、节奏和用词，不改变事实、情节、人物关系、专名和正文长度结构。
-输出严格 JSON：{"text":"润色后的正文纯文本","changes":[{"kind":"用词","before":"原文","after":"改后"}]}
-
-★ changes 必须是真的动过的地方：before 是原文、after 是你改成的样子，**两者不能相同**。
-  没动过的地方不要列进来 —— 列一条 before === after 的，等于在报假账。
-★ 你的活是让它读起来不像机器写的：删掉解释性的收束句和段尾点题、把「他觉得 / 他意识到」这类
-  心理直述换成动作、拆散过于整齐的三段排比、去掉空泛的形容词堆叠。**必须真的动。**
-★ 但绝不改变事实、数字、时间、专名、人物关系；也不要把正文写长或写短一大截。
-
-小说：《${novel.title}》；文风：${novel.style}
-正文：\n${text}${retry ? '\n\n★ 注意：你上一次一个字都没改，这不合格。这一遍必须真的动 —— 上面那几类机器味最重的地方，就是你要动的地方。' : ''}`
-
+/**
+ * 润色重试的追加句。
+ *
+ * 单独拼在 buildPolisherPrompt 的结果后面，而不是写进 POLISHER_PROMPT ——
+ * 「上一次一个字都没改」这句话**只对第二遍成立**，常驻在系统提示里会让第一遍
+ * 去改动本来没问题的地方。红线（NO_AI_VOICE）在系统提示里，不受这里影响。
+ */
+const RETRY_NOTE = '★ 注意：你上一次一个字都没改，这不合格。这一遍必须真的动 —— 上一版里机器味最重的地方，就是你要动的地方。'
 /**
  * 前情：调用方给了就用它；没给且不是第一章，就从库里取上一章的摘要与结尾状态。
  *
@@ -72,22 +50,18 @@ const resolvePrevious = (
     .join('\n')
 }
 
-/** 喂给执笔模型的资料：世界观 + 角色卡。走门面取，不在这里开库 */
-const novelContext = (novelId: number): string => {
-  const world = worldApi.currentWorld(novelId)
-  const characters = characterApi
-    .listCharacters(novelId)
-    .map((c) => ({ id: c.id, name: c.name, role: c.role, voice: c.voice, want: c.want, need: c.need }))
-  return JSON.stringify({ world, characters })
-}
-
 export const generateChapterTool = tool(
   async ({ chapterIdx, previous, decisions }, config) => {
     const novelId = novelIdOf(config)
     const novel = novelOf(config)
-    const context = novelContext(novelId)
-    const writer = createModel(0.7, 300_000, false, 8192)
-    const polisher = createModel(0.25, 180_000, false, 8192)
+    // 两个真 agent，各自带 responseFormat（zod schema）。
+    // 不用裸模型 + 正则抠 JSON：结构化输出该由模型层保证，抠出来的那一版已经错了。
+    //
+    // 温度沿用原值（writer 0.7 / polisher 0.3）。maxTokens 必须显式给：
+    // 一章正文 3000–4000 字 ≈ 6000+ token，加上 summary/endsWith 与 JSON 结构开销，
+    // 不给上限时长章会中途截断 —— 而截断出来的正文读着还挺完整，只是结尾断在半句上。
+    const writer = createWriterAgent(createModel(0.7, 300_000, false, 8192))
+    const polisher = createPolisherAgent(createModel(0.3, 180_000, false, 8192))
 
     // 一次开库跑完整条链：plan → claim → 执笔 → draft → 润色 → final → 收尾。
     // 中间夹着两次模型调用，逐步开库关库既慢，也让「这一章的多个步骤」没有同一个事务视角。
@@ -99,8 +73,14 @@ export const generateChapterTool = tool(
       // 不兜这个底，第 2 章会被当成开篇写 —— 它读不到第 1 章末尾的钩子，衔接就断了，
       // 而且不会报错，只会写出一章自成体系却接不上的正文。
       const previousText = resolvePrevious(ctx, chapterIdx, previous)
+
+      // 取材：只用本章出场的人、只用此刻合法的字段（secret/reveal/arcEnd 一律不给）。
+      // 取材与渲染都在 my-app 后面 —— 「该给 writer 看什么」是业务判断，不该由调用方自觉传参。
+      const brief = writingApi.getWritingBrief(ctx.database, novelId, chapter)
+      const rendered = writingApi.renderBrief(brief)
+
       // 指纹只跟"这一章的输入"走：输入没变才允许复用已存的初稿
-      const fingerprint = JSON.stringify({ chapter, previous: previousText, decisions })
+      const fingerprint = JSON.stringify({ chapter, previous: previousText, decisions, brief: rendered })
 
       const workflow = createChapterWorkflow({
         plan: async (input) => { ctx.planTask('chapter', String(input.chapterIdx), fingerprint) },
@@ -109,9 +89,24 @@ export const generateChapterTool = tool(
           return { action: task.action, taskId: task.taskId }
         },
         write: async (): Promise<ChapterDraft> => {
-          const value = jsonResponse(await writer.invoke(writerPrompt(novel, chapter, previousText, decisions ?? '', context)))
-          if (typeof value.text !== 'string' || !value.text.trim()) throw new Error('执笔 Agent 返回空正文')
-          return { text: value.text, summary: typeof value.summary === 'string' ? value.summary : '', endsWith: typeof value.endsWith === 'string' ? value.endsWith : '' }
+          const value = await writer.invoke({
+            messages: [{
+              role: 'user',
+              content: buildWriterPrompt({
+                world: rendered.world,
+                cast: rendered.cast,
+                places: rendered.place,
+                style: novel.style || '无特别文风要求，按世界观基调走。',
+                previous: previousText || '这是开篇，没有前情。',
+                chapter: rendered.chapter,
+                decisions: decisions?.trim() || '无',
+              }),
+            }],
+          })
+          // structuredResponse 是 zod schema 校验过的返回值 —— 比从文本里抠 JSON 可靠
+          const drafted = value.structuredResponse
+          if (!drafted?.text?.trim()) throw new Error('执笔 Agent 返回空正文')
+          return { text: drafted.text, summary: drafted.summary ?? '', endsWith: drafted.endsWith ?? '' }
         },
         loadDraft: async () => {
           const draft = ctx.getText(chapterIdx, 'draft')
@@ -119,16 +114,22 @@ export const generateChapterTool = tool(
           return { text: draft.text, summary: draft.summary, endsWith: draft.endsWith }
         },
         polish: async (input): Promise<ChapterPolish> => {
-          const value = jsonResponse(await polisher.invoke(polisherPrompt(novel, input.draft.text, input.polishRetry === true)))
-          if (typeof value.text !== 'string' || !value.text.trim()) throw new Error('润色 Agent 返回空正文')
-          const changes = Array.isArray(value.changes) ? value.changes : []
+          const base = buildPolisherPrompt({
+            terms: brief.terms || '（这本书还没有专名表）',
+            forbidden: brief.forbidden || '（无特别禁令）',
+            style: novel.style || '按世界观基调走。',
+            text: input.draft.text,
+          })
+          const value = await polisher.invoke({
+            messages: [{ role: 'user', content: input.polishRetry === true ? `${base}\n\n${RETRY_NOTE}` : base }],
+          })
+          const polished = value.structuredResponse
+          if (!polished?.text?.trim()) throw new Error('润色 Agent 返回空正文')
+          const changes = Array.isArray(polished.changes) ? polished.changes : []
           // 空转条目不是改动：before 与 after 一样的那种从审计清单里去掉。
           // 留着它们等于替模型把「我改了」这句话记进档案，而它其实一个字都没动。
-          const applied = changes.filter((c) => {
-            const item = (c ?? {}) as { before?: unknown; after?: unknown }
-            return String(item.before ?? '') !== String(item.after ?? '')
-          })
-          return { text: value.text, report: { changes: applied, droppedNoop: changes.length - applied.length } }
+          const applied = changes.filter((change) => change.before !== change.after)
+          return { text: polished.text, report: { changes: applied, droppedNoop: changes.length - applied.length } }
         },
         // 终稿的记忆由 ctx.saveText 按 stage 决定要不要发（只有 final 记）
         save: async (input) => {
