@@ -1,89 +1,36 @@
-/**
- * 地点接口。
- *
- * 挂载点：app.route('/api/novels/:novelId/locations', locationController)
- *
- * `GET /tree` 是给前端画地图用的 —— 层级挂载的结果。
- * `GET /unresolved` 是反面：parent 写了名字但那个父地点还没建的那些。
- */
-import { Hono } from 'hono'
-import * as service from '../service/locationService'
-import { parseId, novelIdOf, fail, readJson } from '../shared/http'
-import type { CreateLocationDTO, UpdateLocationDTO } from '../../../db/types'
-
-export const locationController = new Hono()
-
-/** GET /api/novels/:novelId/locations */
-locationController.get('/', (c) => {
-  const novelId = novelIdOf(c)
-  if (novelId === null) return c.json({ message: 'novelId 必须是整数' }, 400)
-  return c.json(service.listLocations(novelId))
-})
-
-/** GET /api/novels/:novelId/locations/tree —— 层级树 */
-locationController.get('/tree', (c) => {
-  const novelId = novelIdOf(c)
-  if (novelId === null) return c.json({ message: 'novelId 必须是整数' }, 400)
-  return c.json(service.getTree(novelId))
-})
-
-/** GET /api/novels/:novelId/locations/unresolved —— 父地点还没建的那些 */
-locationController.get('/unresolved', (c) => {
-  const novelId = novelIdOf(c)
-  if (novelId === null) return c.json({ message: 'novelId 必须是整数' }, 400)
-  return c.json(service.listUnresolvedParents(novelId))
-})
-
-/** GET /api/novels/:novelId/locations/:id */
-locationController.get('/:id', (c) => {
-  const id = parseId(c.req.param('id'))
-  if (id === null) return c.json({ message: 'id 必须是整数' }, 400)
-
-  const loc = service.getLocation(id)
-  if (!loc) return c.json({ message: `id=${id} 不存在` }, 404)
-  return c.json(loc)
-})
+import { createLocationRuntime, type Location, type LocationInput, type LocationPatch } from '../db/locationDB'
+import { saveLocationWithMemory } from '../service/entityService'
+import { withNovel } from './withNovel'
 
 /**
- * POST /api/novels/:novelId/locations
+ * 地点 controller —— 一个动作一次调用。
  *
- * parent 写名字。解析不出来不算错 —— 那说明父地点还没建（比如世界观只给了
- * "青州"，先建了"旧观的水井"），建好父地点时回头会自动挂上。
+ * 建地点要顺带把之前挂不上来的子地点补上（parent_raw 对得上、parent_id 还是 NULL 的那些），
+ * 这件事在 service 的 saveLocationWithMemory 里，漏掉它待办清单就永远清不掉。
  */
-locationController.post('/', async (c) => {
-  const novelId = novelIdOf(c)
-  if (novelId === null) return c.json({ message: 'novelId 必须是整数' }, 400)
+export const saveLocation = (novelId: number, input: LocationInput) =>
+  withNovel(novelId, (database) => saveLocationWithMemory(database, novelId, input))
 
-  const body = await readJson<CreateLocationDTO>(c)
-  if (body === undefined) return c.json({ message: '请求体不是合法 JSON' }, 400)
+export const listLocations = (novelId: number): Location[] =>
+  withNovel(novelId, (database) => createLocationRuntime(database).list())
 
-  try {
-    return c.json(service.createLocation({ ...body, novel_id: novelId }), 201)
-  } catch (e) {
-    return fail(c, e)
-  }
-})
+export const getLocation = (novelId: number, id: number): Location | null =>
+  withNovel(novelId, (database) => createLocationRuntime(database).get(id))
 
-locationController.patch('/:id', async (c) => {
-  const id = parseId(c.req.param('id'))
-  if (id === null) return c.json({ message: 'id 必须是整数' }, 400)
+export const getLocationByName = (novelId: number, name: string): Location | null =>
+  withNovel(novelId, (database) => createLocationRuntime(database).getByName(name))
 
-  const body = await readJson<UpdateLocationDTO>(c)
-  if (body === undefined) return c.json({ message: '请求体不是合法 JSON' }, 400)
+/** 搭层级树用：某地点下的直接子地点 */
+export const listChildLocations = (novelId: number, parentId: number): Location[] =>
+  withNovel(novelId, (database) => createLocationRuntime(database).children(parentId))
 
-  try {
-    const loc = service.updateLocation(id, body)
-    if (!loc) return c.json({ message: `id=${id} 不存在` }, 404)
-    return c.json(loc)
-  } catch (e) {
-    return fail(c, e)
-  }
-})
+/** 根节点 = 世界观铺的粗骨架 */
+export const listRootLocations = (novelId: number): Location[] =>
+  withNovel(novelId, (database) => createLocationRuntime(database).roots())
 
-/** DELETE —— 子地点会被提成根节点（外键是 ON DELETE SET NULL），不会跟着消失 */
-locationController.delete('/:id', (c) => {
-  const id = parseId(c.req.param('id'))
-  if (id === null) return c.json({ message: 'id 必须是整数' }, 400)
-  if (!service.deleteLocation(id)) return c.json({ message: `id=${id} 不存在` }, 404)
-  return c.body(null, 204)
-})
+/** 有 parent_raw 但还没解析出 parent_id 的 —— 待建清单的一半 */
+export const listUnresolvedLocationParents = (novelId: number): Location[] =>
+  withNovel(novelId, (database) => createLocationRuntime(database).unresolvedParents())
+
+export const updateLocation = (novelId: number, id: number, patch: LocationPatch): Location | null =>
+  withNovel(novelId, (database) => createLocationRuntime(database).update(id, patch))

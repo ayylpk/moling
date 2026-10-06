@@ -18,9 +18,10 @@
  *    systemPrompt（见 SAgent/stateLite.ts），连书名/题材/文风都在里面。
  *    这里再拼一份就是第二份真相源 —— 旧版的 renderState() 正是这么干的，已删。
  *
- * 旧版 import 了 7 个 `my-app/src/service/*`（那是另一个库）。那些已经全部去掉。
+ * 旧版 import 了 7 个 `my-app/src/service/*`（那是另一个库）。那些已经全部去掉，
+ * 连查目录库都改成走门面（`catalog.listNovels`）—— 这个 CLI 不该比 HTTP 路由更懂数据库。
  */
-import { openCatalogDatabase } from "./storage/novelDatabase"
+import { catalog } from "./my-app"
 import { createNovelSystem } from "./system"
 
 /* ==================== 参数 ==================== */
@@ -38,23 +39,14 @@ const userTurn = argv.slice(1).join(" ").trim() || "汇报一下当前进度，�
 
 /* ==================== 找小说（只认目录库） ==================== */
 
-const catalog = openCatalogDatabase()
-let row: { id: number; slug: string; title: string } | null = null
-try {
-  row = catalog.query("SELECT id, slug, title FROM novels WHERE slug = ?").get(slug) as
-    | { id: number; slug: string; title: string }
-    | null
-} finally {
-  catalog.close()
-}
+const novel = catalog.listNovels().find((item) => item.slug === slug) ?? null
 
-if (!row) {
+if (!novel) {
   console.error(`目录库里没有 slug=${slug} 的小说。`)
   console.error("先在书架页建一本，或：curl -X POST localhost:3000/api/novels -H 'Content-Type: application/json' -d '{\"slug\":\"...\",\"title\":\"...\"}'")
   process.exit(1)
 }
 
-const novel = row
 console.log(`\n=== ${novel.title}（slug: ${novel.slug}｜id: ${novel.id}）===\n`)
 
 /* ==================== 跑 ==================== */

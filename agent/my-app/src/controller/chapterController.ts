@@ -1,135 +1,258 @@
-/**
- * 章纲与正文接口。
- *
- * 挂载点：app.route('/api/novels/:novelId/chapters', chapterController)
- *
- * 注意这里**没有 POST /**：章纲不是单独建的，它随整卷大纲一起提交
- * （POST /api/novels/:novelId/outline/volumes），那样章号连续性和卷边界
- * 才在同一个事务里被校验。单独建章会绕过那套检查。
- */
-import { Hono } from 'hono'
-import * as service from '../service/chapterService'
-import { parseId, novelIdOf, fail, readJson } from '../shared/http'
-import type { TextStage, UpdateChapterDTO, SaveChapterTextDTO } from '../../../db/types'
+import type { Database } from 'bun:sqlite'
 
-export const chapterController = new Hono()
-
-/* ==================== 列表与待办 ==================== */
-// '/pending-demands' 是固定路径，必须写在 '/:chapterId' 前面。
-
-/** GET /api/novels/:novelId/chapters?volumeId=1&from=1&to=50&textStage=final */
-chapterController.get('/', (c) => {
-  const novelId = novelIdOf(c)
-  if (novelId === null) return c.json({ message: 'novelId 必须是整数' }, 400)
-
-  const volumeId = c.req.query('volumeId')
-  const from = c.req.query('from')
-  const to = c.req.query('to')
-  const textStage = c.req.query('textStage')
-
-  try {
-    return c.json(
-      service.listChapters(novelId, {
-        volume_id: volumeId === undefined ? undefined : (parseId(volumeId) ?? undefined),
-        from: from === undefined ? undefined : (parseId(from) ?? undefined),
-        to: to === undefined ? undefined : (parseId(to) ?? undefined),
-        textStage: textStage === undefined ? undefined : (textStage as TextStage),
-      }),
-    )
-  } catch (e) {
-    return fail(c, e)
-  }
-})
+import {
+  createChapterRuntime,
+  type ChapterCast,
+  type ChapterOutline,
+  type ChapterOutlineInput,
+  type ChapterOutlinePatch,
+  type ChapterStage,
+  type ChapterText,
+  type GenerationTask,
+  type PendingDemand,
+  type TextStage,
+  type Volume,
+  type VolumeInput,
+} from '../db/chapterDB'
+import { rememberChapterOutline, rememberChapterText, saveChapterOutlinesWithMemory, type ChapterOutlineSaveReport } from '../service/entityService'
+import { listNovelsInCatalog, openNovelDatabase, slugOfNovel, type CatalogNovel } from '../db/connection'
+import { withNovel } from './withNovel'
 
 /**
- * GET /api/novels/:novelId/chapters/pending-demands
+ * 卷章 controller —— 一个动作一次调用。
  *
- * 章纲里写了 `NEW:...` 但还没兑现的角色与地点。返回里的 `need` 就是
- * NEW: 后面那段话 —— **正好是 Character / Location agent 的输入**。
- * 这是中心 agent 的待办清单。
+ * ── 两种入口，为什么 ──
+ * 大多数动作是"一步就完"的（建一条章纲、读一章），用下面的独立函数。
+ *
+ * 但 generate_chapter 不是：它要在这**一个连接**上连着走 plan → claim → 执笔 →
+ * 存 draft → 润色 → 存 final → 收尾，中间还夹着两次模型调用。逐步开库关库既慢，
+ * 也让"这一章的多个步骤"没有同一个事务视角。所以给它 withChapterConnection：
+ * 一次开库、把一组操作交出去、全程不关，跑完再关。
+ *
+ * 两种入口底下是**同一批 db 方法**，不存在"两条路各写一遍逻辑"。
  */
-chapterController.get('/pending-demands', (c) => {
-  const novelId = novelIdOf(c)
-  if (novelId === null) return c.json({ message: 'novelId 必须是整数' }, 400)
-  return c.json(service.listPendingDemands(novelId))
-})
 
-/** GET /api/novels/:novelId/chapters/:chapterId —— 含出场名单与正文状态 */
-chapterController.get('/:chapterId', (c) => {
-  const id = parseId(c.req.param('chapterId'))
-  if (id === null) return c.json({ message: 'chapterId 必须是整数' }, 400)
+/* ==================== 一步就完的动作 ==================== */
 
-  const chapter = service.getChapter(id)
-  if (!chapter) return c.json({ message: `chapterId=${id} 不存在` }, 404)
-  return c.json(chapter)
-})
+/** 落一批章纲（一条 = 单章重跑，一整卷 = 一次落完）。每条各自提交、各自兜错 */
+export const saveChapterOutlines = (
+  novelId: number,
+  volumeNo: number,
+  chapters: ChapterOutlineInput[],
+): ChapterOutlineSaveReport => withNovel(novelId, (database) => saveChapterOutlinesWithMemory(database, novelId, volumeNo, chapters))
 
-/* ==================== 正文 ==================== */
+/** 建一卷。卷本身不单独发记忆 —— 记忆记的是"这一卷的卷纲"（见 outlineController.saveVolumeOutline） */
+export const createVolume = (novelId: number, input: VolumeInput) =>
+  withNovel(novelId, (database) => createChapterRuntime(database).createVolume(input))
 
-/** GET /api/novels/:novelId/chapters/:chapterId/texts —— draft 与 final */
-chapterController.get('/:chapterId/texts', (c) => {
-  const id = parseId(c.req.param('chapterId'))
-  if (id === null) return c.json({ message: 'chapterId 必须是整数' }, 400)
-  return c.json(service.listChapterTexts(id))
-})
+/** 卷列表（不含 hasOutline —— 那个由 outlineController 加，因为它要读卷纲表） */
+export const listVolumes = (novelId: number): Volume[] =>
+  withNovel(novelId, (database) => createChapterRuntime(database).listVolumes())
 
-/** GET /api/novels/:novelId/chapters/:chapterId/texts/final */
-chapterController.get('/:chapterId/texts/:stage', (c) => {
-  const id = parseId(c.req.param('chapterId'))
-  if (id === null) return c.json({ message: 'chapterId 必须是整数' }, 400)
+export const getVolumeByNo = (novelId: number, no: number): Volume | null =>
+  withNovel(novelId, (database) => createChapterRuntime(database).getVolumeByNo(no))
 
-  const stage = c.req.param('stage')
-  if (stage !== 'draft' && stage !== 'final') {
-    return c.json({ message: 'stage 只能是 draft 或 final' }, 400)
-  }
-  const text = service.getChapterText(id, stage)
-  if (!text) return c.json({ message: `chapterId=${id} 还没有 ${stage} 正文` }, 404)
-  return c.json(text)
-})
+export const listChapters = (novelId: number, volumeId?: number): ChapterOutline[] =>
+  withNovel(novelId, (database) => createChapterRuntime(database).listChapters(volumeId))
+
+export const getChapter = (novelId: number, idx: number): ChapterOutline | null =>
+  withNovel(novelId, (database) => createChapterRuntime(database).getChapter(idx))
+
+export const getChapterCast = (novelId: number, chapterIdx: number): ChapterCast[] =>
+  withNovel(novelId, (database) => createChapterRuntime(database).getCast(chapterIdx))
+
+/** 待办：章纲里写了 NEW: 但还没兑现的角色/地点。need 就是派给子 agent 的输入 */
+export const listPendingDemands = (novelId: number): PendingDemand[] =>
+  withNovel(novelId, (database) => createChapterRuntime(database).pendingDemands())
+
+export const getChapterText = (novelId: number, chapterIdx: number, stage: TextStage): ChapterText | null =>
+  withNovel(novelId, (database) => createChapterRuntime(database).getText(chapterIdx, stage))
+
+/** 章节索引（剧情页 / 书稿页的列表）：章纲字段 + textStage */
+export const listChapterSummaries = (novelId: number) =>
+  withNovel(novelId, (database) => createChapterRuntime(database).listChapterSummaries())
+
+/** 改一条章纲。改完发记忆：不记的话，"改完这条章纲"在记忆里就不存在 */
+export const updateChapter = (novelId: number, id: number, patch: ChapterOutlinePatch): ChapterOutline | null =>
+  withNovel(novelId, (database) => {
+    const updated = createChapterRuntime(database).updateChapter(id, patch)
+    if (updated) rememberChapterOutline(novelId, updated, updated.volumeId)
+    return updated
+  })
+
+/** 存正文。只有终稿值得进记忆（初稿是过程稿，记进去只给抽取添噪音） */
+export const saveChapterText = (
+  novelId: number,
+  chapterIdx: number,
+  input: { stage: TextStage; text: string; summary?: string; endsWith?: string; polishReport?: unknown },
+): ChapterText =>
+  withNovel(novelId, (database) => {
+    const runtime = createChapterRuntime(database)
+    const chapter = runtime.getChapter(chapterIdx)
+    const saved = runtime.saveText(chapterIdx, input)
+    if (chapter) {
+      rememberChapterText(novelId, {
+        chapterId: chapter.id,
+        chapterIdx,
+        stage: input.stage,
+        text: input.text,
+        summary: input.summary,
+        endsWith: input.endsWith,
+      })
+    }
+    return saved
+  })
 
 /**
- * PUT /api/novels/:novelId/chapters/:chapterId/texts
+ * 按 chapterId 找它属于哪本书。
  *
- * 用 PUT 不用 POST：同一 (章, stage) 只有一行，写第二次是覆盖不是新增。
- * 这也是"库里只留现在是什么、不堆历史版本"那条约定的接口形态。
+ * ── 为什么这里不能"挨本找，找到就用" ──
+ * chapterId 是 **per-novel 库里的自增主键**，每本书都从 1 开始。
+ * 书架上只要有两本书，就一定有两本都有 id=1 的章。所以"遍历目录库、命中第一本就返回"
+ * 写正文时会**写到别人的书里**：一个PUT 静默覆盖了另一本书的终稿，
+ * 两本书的作者都以为改的是自己那本。
+ *
+ * 所以：命中多于一本就**明确报错**，让调用方带上 novelId，而不是替它猜。
+ * 带 novelId 时只开那一本——这也顺带把"多本书时遍历 N 个库"省掉了。
  */
-chapterController.put('/:chapterId/texts', async (c) => {
-  const id = parseId(c.req.param('chapterId'))
-  if (id === null) return c.json({ message: 'chapterId 必须是整数' }, 400)
-
-  const body = await readJson<SaveChapterTextDTO>(c)
-  if (body === undefined) return c.json({ message: '请求体不是合法 JSON' }, 400)
-
-  try {
-    return c.json(service.saveChapterText(id, body))
-  } catch (e) {
-    return fail(c, e)
+export const withChapterById = <T>(
+  chapterId: number,
+  action: (database: Database, novelId: number) => T,
+  novelId?: number,
+): T | null => {
+  if (novelId !== undefined) {
+    // 指定了书就只认这一本；它没有这一章 = 找不到，不退回去搜别本
+    const runtime = openNovelDatabase(slugOfNovel(novelId))
+    try {
+      if (!createChapterRuntime(runtime).getChapterById(chapterId)) return null
+      return action(runtime, novelId)
+    } finally {
+      runtime.close()
+    }
   }
-})
 
-/* ==================== 改与删 ==================== */
-
-/** PATCH —— 传了 characters 就整份重建出场名单 */
-chapterController.patch('/:chapterId', async (c) => {
-  const id = parseId(c.req.param('chapterId'))
-  if (id === null) return c.json({ message: 'chapterId 必须是整数' }, 400)
-
-  const body = await readJson<UpdateChapterDTO>(c)
-  if (body === undefined) return c.json({ message: '请求体不是合法 JSON' }, 400)
-
-  try {
-    const chapter = service.updateChapter(id, body)
-    if (!chapter) return c.json({ message: `chapterId=${id} 不存在` }, 404)
-    return c.json(chapter)
-  } catch (e) {
-    return fail(c, e)
+  const hits: Array<{ novel: CatalogNovel; database: Database }> = []
+  for (const novel of listNovelsInCatalog()) {
+    const database = openNovelDatabase(novel.slug)
+    if (createChapterRuntime(database).getChapterById(chapterId)) hits.push({ novel, database })
+    else database.close()
   }
-})
+  if (hits.length === 0) return null
+  if (hits.length > 1) {
+    for (const hit of hits) hit.database.close()
+    throw new TypeError(`chapter_id=${chapterId} 在 ${hits.length} 本书里都存在：请求必须带 novelId，服务器不猜是哪一本`)
+  }
+  const only = hits[0]!
+  try {
+    return action(only.database, only.novel.id)
+  } finally {
+    only.database.close()
+  }
+}
 
-/** DELETE —— 会级联带走这一章的正文和裁决记录。不可逆 */
-chapterController.delete('/:chapterId', (c) => {
-  const id = parseId(c.req.param('chapterId'))
-  if (id === null) return c.json({ message: 'chapterId 必须是整数' }, 400)
-  if (!service.deleteChapter(id)) return c.json({ message: `chapterId=${id} 不存在` }, 404)
-  return c.body(null, 204)
-})
+/**
+ * 下面三个是 withChapterById 的固定用法各包一层。
+ *
+ * 它们存在是因为「chapterId 属于哪本书」这件事对调用方是噪音：正文接口只拿到
+ * chapterId，不该让路由写一遍遍历目录、判存在、开库、关库。**找不到或归属不唯一
+ * 都返回 null / 抛错**，由路由回 404 —— 不猜。
+ */
+export const getChapterTextById = (chapterId: number, stage: TextStage, novelId?: number): ChapterText | null =>
+  withChapterById(chapterId, (database) => createChapterRuntime(database).getTextById(chapterId, stage), novelId)
+
+export const saveChapterTextById = (
+  chapterId: number,
+  stage: TextStage,
+  input: { text: string; summary?: string; endsWith?: string },
+  novelId?: number,
+): ChapterText | null =>
+  withChapterById(chapterId, (database, novelId) => {
+    const runtime = createChapterRuntime(database)
+    const chapter = runtime.getChapterById(chapterId)
+    const saved = runtime.saveTextById(chapterId, { stage, ...input })
+    if (chapter) {
+      rememberChapterText(novelId, {
+        chapterId,
+        chapterIdx: chapter.idx,
+        stage,
+        text: input.text,
+        summary: input.summary,
+        endsWith: input.endsWith,
+      })
+    }
+    return saved
+  }, novelId)
+
+export const updateChapterById = (chapterId: number, patch: ChapterOutlinePatch, novelId?: number): ChapterOutline | null =>
+  withChapterById(chapterId, (database, novelId) => {
+    const updated = createChapterRuntime(database).updateChapter(chapterId, patch)
+    if (updated) rememberChapterOutline(novelId, updated, updated.volumeId)
+    return updated
+  }, novelId)
+
+/* ==================== 连续多步：一次开库，全程不关 ==================== */
+
+export type ChapterContext = {
+  /** 底层 db 句柄。需要 db 层有、但这里没包的动作时用它（别为了绕过这层去自己开库） */
+  readonly database: Database
+  readonly novelId: number
+  planTask(stage: ChapterStage, targetKey: string, inputHash?: string): GenerationTask
+  claimTask(stage: ChapterStage, targetKey: string, inputHash?: string): { action: 'run' | 'skip'; taskId: number; task: GenerationTask }
+  finishTask(taskId: number, artifactPath?: string): GenerationTask
+  failTask(taskId: number, error: string): GenerationTask
+  getChapter(idx: number): ChapterOutline | null
+  getChapterById(id: number): ChapterOutline | null
+  listChapters(volumeId?: number): ChapterOutline[]
+  getText(chapterIdx: number, stage: TextStage): ChapterText | null
+  /** 存正文并按 stage 决定要不要发记忆（只有 final 记） */
+  saveText(chapterIdx: number, input: { stage: TextStage; text: string; summary?: string; endsWith?: string; polishReport?: unknown }): ChapterText
+  getCast(chapterIdx: number): ChapterCast[]
+}
+
+/**
+ * 一次开库，把一组章操作交出去，跑完再关。
+ *
+ * action 可以是异步的（章节生成里要等两次模型调用）。**期间不要在 action 里
+ * 再去调那些独立函数** —— 那样会开出第二个连接去写同一张表，
+ * 事务视角就断了，而且 SQLite 会在第二个连接上等锁。
+ */
+export const withChapterConnection = async <T>(
+  novelId: number,
+  action: (context: ChapterContext) => Promise<T> | T,
+): Promise<T> => {
+  const database = openNovelDatabase(slugOfNovel(novelId))
+  try {
+    const runtime = createChapterRuntime(database)
+    const context: ChapterContext = {
+      database,
+      novelId,
+      planTask: (stage, targetKey, inputHash = '') => runtime.planTask(stage, targetKey, inputHash),
+      claimTask: (stage, targetKey, inputHash = '') => runtime.claimTask(stage, targetKey, inputHash),
+      finishTask: (taskId, artifactPath = '') => runtime.finishTask(taskId, artifactPath),
+      failTask: (taskId, error) => runtime.failTask(taskId, error),
+      getChapter: (idx) => runtime.getChapter(idx),
+      getChapterById: (id) => runtime.getChapterById(id),
+      listChapters: (volumeId) => runtime.listChapters(volumeId),
+      getText: (chapterIdx, stage) => runtime.getText(chapterIdx, stage),
+      saveText: (chapterIdx, input) => {
+        const chapter = runtime.getChapter(chapterIdx)
+        const saved = runtime.saveText(chapterIdx, input)
+        if (chapter) {
+          rememberChapterText(novelId, {
+            chapterId: chapter.id,
+            chapterIdx,
+            stage: input.stage,
+            text: input.text,
+            summary: input.summary,
+            endsWith: input.endsWith,
+          })
+        }
+        return saved
+      },
+      getCast: (chapterIdx) => runtime.getCast(chapterIdx),
+    }
+    return await action(context)
+  } finally {
+    database.close()
+  }
+}

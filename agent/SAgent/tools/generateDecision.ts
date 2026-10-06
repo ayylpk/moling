@@ -3,8 +3,8 @@ import * as z from 'zod'
 
 import { createActorAgent, type Actor, type ActorScene } from '../../Actor/agent'
 import { buildActorPrompt } from '../../Actor/prompt'
-import { createCharacterRuntime } from '../characterRuntime'
-import { pack, withNovelDatabase } from './context'
+import { character as characterApi } from '../../my-app'
+import { novelIdOf, pack } from './context'
 
 /**
  * 角色裁决生成工具 —— 把 Actor agent 接到中心 Agent 手上（从旧的 run_character_actor 迁来）。
@@ -32,8 +32,8 @@ import { pack, withNovelDatabase } from './context'
 export const generateDecision = tool(
   async ({ name, story, situation, options, chatPrompt }, config) => {
     // ① 同步取卡（这一跳结束就关库；模型调用期间不需要连接）
-    const actor = withNovelDatabase(config, (database): Actor => {
-      const full = createCharacterRuntime(database).getByName(name)
+    const full = characterApi.getCharacterByName(novelIdOf(config), name)
+    const actor = ((full): Actor => {
       if (!full) {
         throw new Error(
           `找不到角色「${name}」。先用 generate_character 造出来、save_character 落库，再调裁决。`,
@@ -51,7 +51,7 @@ export const generateDecision = tool(
         relations: [],
         knows: [],
       }
-    })
+    })(full)
 
     // ② 调 Actor agent（它拿到的只是几段文本，没有任何数据库连接）
     const scene: ActorScene = { story, situation, options, chatPrompt }

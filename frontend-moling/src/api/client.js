@@ -54,11 +54,18 @@ export const api = {
   /** 一本书的全部章节：id/idx/title/volume_id/goal/conflict/hook/emotion/summary/textStage */
   listChapters: (novelId) => request(`/api/novels/${novelId}/chapters`),
   createChapter: (novelId, chapter) => request(`/api/novels/${novelId}/chapters`, { method: 'POST', body: JSON.stringify(chapter) }),
-  updateChapter: (chapterId, patch) => request(`/api/chapters/${chapterId}`, { method: 'PUT', body: JSON.stringify(patch) }),
+  /**
+   * 按 chapterId 的这三个接口**必须带 novelId**。
+   *
+   * chapterId 是每本书各自从 1 开始的自增主键 —— 书架上只要有两本书，
+   * 就一定有两本都有 id=1 的章。不带 novelId 时服务器无法判断是哪一本，
+   * 会直接报错而不是替我们猜（猜错就是写到别人的书里）。
+   */
+  updateChapter: (novelId, chapterId, patch) => request(`/api/chapters/${chapterId}?novelId=${novelId}`, { method: 'PUT', body: JSON.stringify(patch) }),
   /** 取某一阶段的正文；没有则返回 {chapter_id, stage, text:''} */
-  getChapterText: (chapterId, stage = 'draft') => request(`/api/chapters/${chapterId}/text?stage=${stage}`),
-  saveChapterText: (chapterId, text, stage = 'draft') =>
-    request(`/api/chapters/${chapterId}/text?stage=${stage}`, { method: 'PUT', body: JSON.stringify({ text }) }),
+  getChapterText: (novelId, chapterId, stage = 'draft') => request(`/api/chapters/${chapterId}/text?stage=${stage}&novelId=${novelId}`),
+  saveChapterText: (novelId, chapterId, text, stage = 'draft') =>
+    request(`/api/chapters/${chapterId}/text?stage=${stage}&novelId=${novelId}`, { method: 'PUT', body: JSON.stringify({ text }) }),
 
   /* ==================== 动态画像与工作流状态 ==================== */
   /**

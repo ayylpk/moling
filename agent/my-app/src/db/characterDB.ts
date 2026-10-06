@@ -1,34 +1,102 @@
+import type { Database } from 'bun:sqlite'
+
 /**
- * 角色（characters + character_relations）的数据库访问层。
+ * 角色卡 runtime —— per-novel 库的角色写入 / 读取入口。
  *
- * 关系网是单独一张表，不是角色卡里的 JSON 数组。原因只有一个：
- * **外键能拦住现编的 id**。9-30 那次生成出的 `relations: ["protagonist",
- * "shen-wujiu-di"]` 里，前者是角色定位不是 id、后者那个人当时根本不存在 ——
- * 换成 JSON 列，这种错永远查不出来。
+ * ── 为什么没有 novel_id ──
+ * 旧的 characters 长在 resources/myapp.sqlite 的「单库多小说」模式里，每张卡带 novel_id。
+ * per-novel 库是一本小说一个文件（resources/novels/<slug>/novel.sqlite），
+ * **库本身就是边界**，所以这里的签名里没有 novel_id —— 传了反而说明调用方还没换脑。
  *
- * 解析不到的关系留 `to_character_id = NULL`，那行就是"还没建的人"。
+ * ── 与 character_portraits 的分工：固定 vs 动态，必须互补 ──
+ * 本表存**固定设定**（voice / want / cost / arc…），是这条流水线的输入，模型不该随剧情改它；
+ * character_portraits（storage/portraitPipeline.ts 写）存**随剧情生长的画像**。
+ * 所以 runtime 一个字都不碰 character_portraits —— 一旦这里也去写画像，
+ * 「设定」就会被「画像」覆盖，角色会随着章节漂移。
+ *
+ * ── 为什么是 update 而不是 createVersion ──
+ * characters 表**没有 version 列**。worlds 之所以带 version，是因为要能回答
+ * 「这一卷基于哪一版世界观生成的」；角色卡不需要回答这个（大纲引用的是角色本身）。
+ * 所以改设定就是原地 UPDATE。
+ *
+ * 入参形状对着 Character agent 的 CharacterSchema：那边 `arc` 是 {start,end}，
+ * 库里拆成 arc_start / arc_end 两列 —— 「起点 ≠ 终点」是这张卡有没有推进的判据，
+ * 埋进 JSON 就没法用 SQL 比。
  */
-import { db } from './createDB'
-import type {
-  CharacterEntity,
-  CharacterRelationEntity,
-  CharacterBriefVO,
-  CharacterRole,
-  CharacterStatus,
-} from '../../../db/types'
+export type CharacterRole = 'protagonist' | 'antagonist' | 'support'
+export type CharacterStatus = 'alive' | 'dead' | 'disabled'
+export type CharacterSource = 'agent' | 'hand'
 
-/* ==================== 入参类型 ==================== */
+export type CharacterInput = {
+  name: string
+  role: CharacterRole
+  /** 不可改的可感知事实（身体、出身） */
+  immutable?: string[]
+  voice?: string
+  want?: string
+  cost?: string
+  need?: string
+  secret?: string
+  reveal?: string
+  /** 底线：越线即翻脸 */
+  line?: string
+  flaw?: string
+  arc?: { start?: string; end?: string }
+  status?: CharacterStatus
+  source?: CharacterSource
+}
 
-export type NewCharacterRow = Omit<CharacterEntity, 'id' | 'created_at' | 'updated_at'>
-export type CharacterRowPatch = Partial<Omit<CharacterEntity, 'id' | 'novel_id' | 'created_at'>>
+/** 改卡片的补丁。字段名和库里一致（arc 已拆开） */
+export type CharacterPatch = {
+  name?: string
+  role?: CharacterRole
+  immutable?: string[]
+  voice?: string
+  want?: string
+  cost?: string
+  need?: string
+  secret?: string
+  reveal?: string
+  line?: string
+  flaw?: string
+  arcStart?: string
+  arcEnd?: string
+  status?: CharacterStatus
+  source?: CharacterSource
+}
 
-export type NewRelationRow = Omit<CharacterRelationEntity, 'id' | 'created_at' | 'updated_at'>
+export type Character = {
+  id: number
+  name: string
+  role: CharacterRole
+  immutable: string[]
+  voice: string
+  want: string
+  cost: string
+  need: string
+  secret: string
+  reveal: string
+  line: string
+  flaw: string
+  arcStart: string
+  arcEnd: string
+  status: CharacterStatus
+  source: CharacterSource
+  createdAt: string
+  updatedAt: string
+}
 
-/* ==================== 字段白名单 ==================== */
-// 字段名要拼进 SQL，只能从这几个白名单取 —— 不能直接用传入对象的 key。
-const TEXT_KEYS = [
-  'name',
-  'role',
+/** 摘要列表用：不搬全文，只回答「场上有谁」 */
+export type CharacterBrief = Pick<Character, 'id' | 'name' | 'role' | 'status' | 'source'>
+
+export type CharacterCreateResult = { character: Character; created: boolean }
+
+const ROLE_SET: ReadonlySet<string> = new Set(['protagonist', 'antagonist', 'support'])
+const STATUS_SET: ReadonlySet<string> = new Set(['alive', 'dead', 'disabled'])
+const SOURCE_SET: ReadonlySet<string> = new Set(['agent', 'hand'])
+
+/** 排除 name / role（它们是插入时必填的定位字段，走各自的校验） */
+const PATCH_TEXT_KEYS = [
   'voice',
   'want',
   'cost',
@@ -39,187 +107,169 @@ const TEXT_KEYS = [
   'flaw',
   'arc_start',
   'arc_end',
-  'status',
-  'source',
-  'updated_at',
 ] as const
-const JSON_KEYS = ['immutable'] as const
 
-/* ==================== 预编译语句 ==================== */
-
-const stmtInsert = db.query(`
-  INSERT INTO characters
-    (novel_id, name, role, immutable, voice, want, cost, need, secret, reveal,
-     line, flaw, arc_start, arc_end, status, source)
-  VALUES
-    ($novel_id, $name, $role, $immutable, $voice, $want, $cost, $need, $secret, $reveal,
-     $line, $flaw, $arc_start, $arc_end, $status, $source)
-`)
-const stmtSelectById = db.query(`SELECT * FROM characters WHERE id = ?`)
-const stmtSelectByName = db.query(`SELECT * FROM characters WHERE novel_id = ? AND name = ?`)
-const stmtSelectByNovel = db.query(`SELECT * FROM characters WHERE novel_id = ? ORDER BY id`)
-const stmtDelete = db.query(`DELETE FROM characters WHERE id = ?`)
-
-const stmtInsertRelation = db.query(`
-  INSERT INTO character_relations (novel_id, from_character_id, to_raw, to_character_id, attitude, resolved_at)
-  VALUES ($novel_id, $from_character_id, $to_raw, $to_character_id, $attitude, $resolved_at)
-`)
-const stmtRelationsByFrom = db.query(
-  `SELECT * FROM character_relations WHERE from_character_id = ? ORDER BY id`,
-)
-const stmtRelationsByNovel = db.query(
-  `SELECT * FROM character_relations WHERE novel_id = ? ORDER BY from_character_id, id`,
-)
-const stmtDeleteRelationsByFrom = db.query(
-  `DELETE FROM character_relations WHERE from_character_id = ?`,
-)
-
-/* ==================== 增 ==================== */
-
-export const insertCharacter = (row: NewCharacterRow): number =>
-  Number(
-    stmtInsert.run({
-      $novel_id: row.novel_id,
-      $name: row.name,
-      $role: row.role,
-      $immutable: row.immutable,
-      $voice: row.voice,
-      $want: row.want,
-      $cost: row.cost,
-      $need: row.need,
-      $secret: row.secret,
-      $reveal: row.reveal,
-      $line: row.line,
-      $flaw: row.flaw,
-      $arc_start: row.arc_start,
-      $arc_end: row.arc_end,
-      $status: row.status,
-      $source: row.source,
-    }).lastInsertRowid,
-  )
-
-export const insertRelation = (row: NewRelationRow): number =>
-  Number(
-    stmtInsertRelation.run({
-      $novel_id: row.novel_id,
-      $from_character_id: row.from_character_id,
-      $to_raw: row.to_raw,
-      $to_character_id: row.to_character_id,
-      $attitude: row.attitude,
-      $resolved_at: row.resolved_at,
-    }).lastInsertRowid,
-  )
-
-/* ==================== 查 ==================== */
-
-export const selectCharacter = (id: number): CharacterEntity | null =>
-  stmtSelectById.get(id) as CharacterEntity | null
-
-/** 按名字查 —— raw → id 解析就靠它。精确相等，不做模糊匹配 */
-export const selectCharacterByName = (novelId: number, name: string): CharacterEntity | null =>
-  stmtSelectByName.get(novelId, name) as CharacterEntity | null
-
-export const selectCharactersByNovel = (novelId: number): CharacterEntity[] =>
-  stmtSelectByNovel.all(novelId) as CharacterEntity[]
-
-export const selectRelationsByFrom = (characterId: number): CharacterRelationEntity[] =>
-  stmtRelationsByFrom.all(characterId) as CharacterRelationEntity[]
-
-export const selectRelationsByNovel = (novelId: number): CharacterRelationEntity[] =>
-  stmtRelationsByNovel.all(novelId) as CharacterRelationEntity[]
-
-/**
- * 精简列表 + 每张卡还有几条关系没兑现。
- *
- * 那个子查询就是"这张卡接完了没有"的答案。角色筛选走绑定参数，
- * 列名是代码字面量，没有注入口子。
- */
-export const selectCharacterBriefs = (
-  novelId: number,
-  filter: { role?: CharacterRole; status?: CharacterStatus } = {},
-): CharacterBriefVO[] => {
-  const conds = ['c.novel_id = $novel_id']
-  const params: Record<string, string | number> = { $novel_id: novelId }
-  if (filter.role) {
-    conds.push('c.role = $role')
-    params.$role = filter.role
+export const createCharacterRuntime = (database: Database) => {
+  const read = (id: number): Character | null => {
+    const row = database.query('SELECT * FROM characters WHERE id = ?').get(id) as Record<string, unknown> | null
+    return row ? toCharacter(row) : null
   }
-  if (filter.status) {
-    conds.push('c.status = $status')
-    params.$status = filter.status
+
+  const readByName = (name: string): Character | null => {
+    const row = database.query('SELECT * FROM characters WHERE name = ?').get(name.trim()) as Record<string, unknown> | null
+    return row ? toCharacter(row) : null
   }
-  return db
-    .query(`
-      SELECT c.id, c.novel_id, c.name, c.role, c.status, c.source,
-             (SELECT count(*) FROM character_relations r
-              WHERE r.from_character_id = c.id AND r.to_character_id IS NULL) AS unresolvedRelations
-      FROM characters c
-      WHERE ${conds.join(' AND ')}
-      ORDER BY c.id
-    `)
-    .all(params) as CharacterBriefVO[]
+
+  /**
+   * 建卡。名字是 UNIQUE —— 同名再建会报错。
+   *
+   * 「一次一个」是全项目的约定（批量从第三五个起必然退化成模板），
+   * 所以这里不做批量接口；要建几个就调几次。
+   */
+  const create = (input: CharacterInput): CharacterCreateResult => {
+    assertInput(input)
+    const existing = readByName(input.name)
+    if (existing) return { character: existing, created: false }
+    const result = database
+      .query(
+        `INSERT INTO characters
+           (name, role, immutable, voice, want, cost, need, secret, reveal, line, flaw, arc_start, arc_end, status, source)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.name.trim(),
+        input.role,
+        JSON.stringify(input.immutable ?? []),
+        input.voice ?? '',
+        input.want ?? '',
+        input.cost ?? '',
+        input.need ?? '',
+        input.secret ?? '',
+        input.reveal ?? '',
+        input.line ?? '',
+        input.flaw ?? '',
+        input.arc?.start ?? '',
+        input.arc?.end ?? '',
+        input.status ?? 'alive',
+        input.source ?? 'agent',
+      )
+    return { character: read(Number(result.lastInsertRowid))!, created: true }
+  }
+
+  /**
+   * 改卡。白名单拼 SQL —— 列名只从代码里的常量取，不信任传入的 key。
+   * 返回改后的完整卡；id 不存在返回 null（而不是抛错：调用方常拿它当"存在吗"用）。
+   */
+  const update = (id: number, patch: CharacterPatch): Character | null => {
+    const sets: string[] = []
+    const params: Array<string | number | null> = []
+
+    if (patch.name !== undefined) {
+      if (!patch.name.trim()) throw new TypeError('name 不能为空')
+      sets.push('name = ?')
+      params.push(patch.name.trim())
+    }
+    if (patch.role !== undefined) {
+      if (!ROLE_SET.has(patch.role)) throw new TypeError(`role 只能是 ${[...ROLE_SET].join(' / ')}`)
+      sets.push('role = ?')
+      params.push(patch.role)
+    }
+    if (patch.status !== undefined) {
+      if (!STATUS_SET.has(patch.status)) throw new TypeError(`status 只能是 ${[...STATUS_SET].join(' / ')}`)
+      sets.push('status = ?')
+      params.push(patch.status)
+    }
+    if (patch.source !== undefined) {
+      if (!SOURCE_SET.has(patch.source)) throw new TypeError(`source 只能是 ${[...SOURCE_SET].join(' / ')}`)
+      sets.push('source = ?')
+      params.push(patch.source)
+    }
+    if (patch.immutable !== undefined) {
+      sets.push('immutable = ?')
+      params.push(JSON.stringify(patch.immutable))
+    }
+    for (const key of PATCH_TEXT_KEYS) {
+      // key 是库里的列名，patch 里的 key 是驼峰，逐个映射
+      const value = patch[camel(key)]
+      if (value === undefined) continue
+      sets.push(`${key} = ?`)
+      params.push(value)
+    }
+
+    if (sets.length === 0) return read(id)
+    database
+      .query(`UPDATE characters SET ${sets.join(', ')}, updated_at = datetime('now','localtime') WHERE id = ?`)
+      .run(...params, id)
+    return read(id)
+  }
+
+  return {
+    create,
+    get: read,
+    getByName: readByName,
+    list(): Character[] {
+      return (database.query('SELECT * FROM characters ORDER BY id').all() as Array<Record<string, unknown>>).map(toCharacter)
+    },
+    /** 索引：只回名字/id/定位，派活前先看它，别用全文去喂子 agent */
+    briefs(): CharacterBrief[] {
+      return database.query('SELECT id, name, role, status, source FROM characters ORDER BY id').all() as CharacterBrief[]
+    },
+    update,
+  }
 }
 
-/** 关系网里指向了不存在角色的那些条 —— 待建清单的一半（另一半在 chapter_cast） */
-export const selectUnresolvedRelations = (novelId: number): CharacterRelationEntity[] =>
-  db
-    .query(
-      `SELECT * FROM character_relations
-       WHERE novel_id = ? AND to_character_id IS NULL
-       ORDER BY from_character_id, id`,
-    )
-    .all(novelId) as CharacterRelationEntity[]
+/** 纯文本列在补丁里的字段名（窄联合，避免把 immutable 之类的非字符串混进来） */
+type PatchTextField = 'voice' | 'want' | 'cost' | 'need' | 'secret' | 'reveal' | 'line' | 'flaw' | 'arcStart' | 'arcEnd'
 
-/* ==================== 改 ==================== */
+/** 驼峰补丁字段 → 库里列名（arc_start / arc_end 这两处不通用，单独给） */
+const PATCH_FIELD_MAP: Record<string, PatchTextField> = {
+  voice: 'voice',
+  want: 'want',
+  cost: 'cost',
+  need: 'need',
+  secret: 'secret',
+  reveal: 'reveal',
+  line: 'line',
+  flaw: 'flaw',
+  arc_start: 'arcStart',
+  arc_end: 'arcEnd',
+}
+const camel = (column: string): PatchTextField => PATCH_FIELD_MAP[column]!
 
-export const updateCharacterRow = (id: number, patch: CharacterRowPatch): number => {
-  const sets: string[] = []
-  const params: Record<string, string | number> = { $id: id }
-
-  for (const key of TEXT_KEYS) {
-    const v = patch[key]
-    if (v !== undefined) {
-      sets.push(`${key} = $${key}`)
-      params[`$${key}`] = v
-    }
-  }
-  for (const key of JSON_KEYS) {
-    const v = patch[key]
-    if (v !== undefined) {
-      sets.push(`${key} = $${key}`)
-      params[`$${key}`] = v
-    }
-  }
-
-  if (sets.length === 0) return 0
-  return db.query(`UPDATE characters SET ${sets.join(', ')} WHERE id = $id`).run(params).changes
+const assertInput = (input: CharacterInput): void => {
+  if (!input || typeof input !== 'object') throw new TypeError('角色必须是对象')
+  if (!input.name?.trim()) throw new TypeError('name 不能为空')
+  if (!input.role) throw new TypeError('role 不能为空')
+  if (!ROLE_SET.has(input.role)) throw new TypeError(`role 只能是 ${[...ROLE_SET].join(' / ')}`)
+  if (input.immutable !== undefined && !Array.isArray(input.immutable)) throw new TypeError('immutable 必须是数组')
+  if (input.status !== undefined && !STATUS_SET.has(input.status)) throw new TypeError(`status 只能是 ${[...STATUS_SET].join(' / ')}`)
 }
 
-/**
- * 把一条关系解析到具体角色。
- *
- * 为什么要这一步：建卡时那个角色可能还不存在（大纲先写了 NEW: 需求）。
- * 等它建好之后，回头把同一本小说里所有指向这个名字的未解析关系补上。
- * 返回补了几条。
- */
-export const resolvePendingRelations = (
-  novelId: number,
-  toRaw: string,
-  characterId: number,
-  now: string,
-): number =>
-  db
-    .query(`
-      UPDATE character_relations
-      SET to_character_id = $cid, resolved_at = $now, updated_at = $now
-      WHERE novel_id = $novel_id AND to_character_id IS NULL AND to_raw = $raw
-    `)
-    .run({ $cid: characterId, $now: now, $novel_id: novelId, $raw: toRaw }).changes
+const parse = <T>(value: unknown, fallback: T): T => {
+  try {
+    return JSON.parse(String(value ?? '')) as T
+  } catch {
+    return fallback
+  }
+}
 
-/* ==================== 删 ==================== */
-
-export const deleteCharacter = (id: number): number => stmtDelete.run(id).changes
-
-/** 重建一张卡的关系网：先清空再插。改 relations 时用 */
-export const deleteRelationsByFrom = (characterId: number): number =>
-  stmtDeleteRelationsByFrom.run(characterId).changes
+const toCharacter = (row: Record<string, unknown>): Character => ({
+  id: Number(row.id),
+  name: String(row.name),
+  role: row.role as CharacterRole,
+  immutable: parse<string[]>(row.immutable, []),
+  voice: String(row.voice),
+  want: String(row.want),
+  cost: String(row.cost),
+  need: String(row.need),
+  secret: String(row.secret),
+  reveal: String(row.reveal),
+  line: String(row.line),
+  flaw: String(row.flaw),
+  arcStart: String(row.arc_start),
+  arcEnd: String(row.arc_end),
+  status: row.status as CharacterStatus,
+  source: row.source as CharacterSource,
+  createdAt: String(row.created_at),
+  updatedAt: String(row.updated_at),
+})

@@ -1,35 +1,34 @@
 import { tool } from 'langchain'
 import * as z from 'zod'
 
-import { saveCharacterWithMemory } from '../../storage/novelEffects'
-import { createCharacterRuntime, type CharacterInput } from '../characterRuntime'
-import { pack, withNovelDatabase } from './context'
+import { character as characterApi, type CharacterInput } from '../../my-app'
+import { novelIdOf, pack } from './context'
 
 /**
- * 角色卡工具 —— 把 characterRuntime 接到中心 Agent 手上。
+ * 角色卡工具 —— 调 my-app 的 character controller。
  *
- * 一个**必须记住的副作用**：建卡之后要回头把章纲里同名未解析的出场记录补上
- * （chapter_cast.character_id 落 NULL 的那些）。否则"章纲先写了林晚、卡后来才建"
- * 这条最常见的路径上，待办永远清不掉，待建清单会一直报同一个名字。
- * 角色关系网（character_relations）**本期不实现**，所以这里没有解析关系的动作。
+ * 这个工具里**没有落库逻辑，也没有记忆逻辑**：建卡之后要回头把章纲里同名未解析的
+ * 出场记录补上（chapter_cast.character_id 落 NULL 的那些）、要发记忆，这两件都在
+ * my-app 的 service 里。少了前者，"章纲先写了林晚、卡后来才建"这条最常见的路径上
+ * 待办永远清不掉；少了后者，同一本书经 HTTP 落库就与经 Agent 落库不一样。
+ *
+ * 所以这里只做三件事：认出是哪本书、调一次、给结果包个标签。
+ * 角色关系网（character_relations）**本期不实现**，所以没有解析关系的动作。
  */
 export const saveCharacter = tool(
-  async (input, config) =>
-    withNovelDatabase(config, (database, novel) => {
-      // 落库 + 回填章纲里的出场引用 + 发记忆：三步在 novelEffects 里绑在一起。
-      // HTTP 落库走的是同一个函数，所以不存在「库落了、记忆没进」的分叉。
-      const { character, created, resolvedCast } = saveCharacterWithMemory(database, novel.id, input as CharacterInput)
+  async (input, config) => {
+    const { character, created, resolvedCast } = characterApi.saveCharacter(novelIdOf(config), input as CharacterInput)
 
-      return pack(created ? `角色已落库｜character_id:${character.id}` : `角色已存在，未重复创建｜character_id:${character.id}`, {
-        id: character.id,
-        name: character.name,
-        role: character.role,
-        status: character.status,
-        created,
-        /** 补上了几条章纲里的出场引用 */
-        resolvedCast,
-      })
-    }),
+    return pack(created ? `角色已落库｜character_id:${character.id}` : `角色已存在，未重复创建｜character_id:${character.id}`, {
+      id: character.id,
+      name: character.name,
+      role: character.role,
+      status: character.status,
+      created,
+      /** 补上了几条章纲里的出场引用 */
+      resolvedCast,
+    })
+  },
   {
     name: 'save_character',
     description:
@@ -58,18 +57,17 @@ export const saveCharacter = tool(
 )
 
 export const readCharacters = tool(
-  async ({ id }, config) =>
-    withNovelDatabase(config, (database) => {
-      const runtime = createCharacterRuntime(database)
-      // 不带 id = 索引（谁在场）；带 id = 一张完整卡
-      if (id === undefined) {
-        const briefs = runtime.briefs()
-        return pack(`角色索引（${briefs.length} 个）`, briefs)
-      }
-      const character = runtime.get(id)
-      if (!character) throw new Error(`找不到 character_id=${id}`)
-      return pack(`角色卡｜character_id:${id}`, character)
-    }),
+  async ({ id }, config) => {
+    const novelId = novelIdOf(config)
+    // 不带 id = 索引（谁在场）；带 id = 一张完整卡
+    if (id === undefined) {
+      const briefs = characterApi.listCharacterBriefs(novelId)
+      return pack(`角色索引（${briefs.length} 个）`, briefs)
+    }
+    const character = characterApi.getCharacter(novelId, id)
+    if (!character) throw new Error(`找不到 character_id=${id}`)
+    return pack(`角色卡｜character_id:${id}`, character)
+  },
   {
     name: 'read_characters',
     description:

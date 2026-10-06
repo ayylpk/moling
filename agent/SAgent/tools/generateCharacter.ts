@@ -3,8 +3,8 @@ import * as z from 'zod'
 
 import { createCharacterAgent } from '../../Character/agent'
 import { buildCharacterPrompt } from '../../Character/prompt'
-import { createCharacterRuntime } from '../characterRuntime'
-import { pack, renderWorld, withNovelDatabase } from './context'
+import { character as characterApi } from '../../my-app'
+import { novelIdOf, novelOf, pack, renderWorld } from './context'
 
 /**
  * 角色生成工具 —— 把 Character agent 接到中心 Agent 手上（从旧的 run_character_designer 迁来）。
@@ -31,15 +31,14 @@ import { pack, renderWorld, withNovelDatabase } from './context'
 export const generateCharacter = tool(
   async ({ need }, config) => {
     // ① 同步取资料（这一跳结束就关库）
-    const input = withNovelDatabase(config, (database, novel) => {
-      const existing = createCharacterRuntime(database).briefs()
-      return {
-        world: renderWorld(database),
-        style: novel.style || '无特别文风要求。',
-        // 已有角色附在 need 后面：模型看不到库，不给就等于让它闭着眼睛重复造人
-        existing: existing.length ? existing.map((c) => `${c.name}（${c.role}）`).join(' / ') : '（尚未建立角色）',
-      }
-    })
+    const novelId = novelIdOf(config)
+    const existing = characterApi.listCharacterBriefs(novelId)
+    const input = {
+      world: renderWorld(novelId),
+      style: novelOf(config).style || '无特别文风要求。',
+      // 已有角色附在 need 后面：模型看不到库，不给就等于让它闭着眼睛重复造人
+      existing: existing.length ? existing.map((c) => `${c.name}（${c.role}）`).join(' / ') : '（尚未建立角色）',
+    }
 
     // ② 调角色 agent（它拿到的只是几段文本，没有任何数据库连接）
     const agent = createCharacterAgent()

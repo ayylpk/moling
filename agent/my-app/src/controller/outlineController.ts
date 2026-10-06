@@ -1,126 +1,69 @@
-/**
- * 大纲接口 —— 全项目最重的一个入口。
- *
- * 挂载点：app.route('/api/novels/:novelId/outline', outlineController)
- *
- *   POST /volumes       保存一卷大纲（写 5 张表，一个事务）
- *   GET  /              全篇锚点
- *   GET  /volumes       各卷大纲
- *   GET  /drift         哪几卷的锚点和现在生效的对不上
- *   POST /check-drift   提交前先比一下，不写库
- *
- * 「锚点」的规矩：只由第一卷写死，之后每卷原样回填。后续卷即使传了不同的锚点，
- * 也**不会覆盖**已有的那份，只会把 drift 报出来 —— 漂移是缺陷不是编辑，
- * 我们的活是把它测出来，不是替调用方改掉。
- */
-import { Hono } from 'hono'
-import * as service from '../service/outlineService'
-import { parseId, novelIdOf, fail, readJson } from '../shared/http'
-import type { CreateAnchorDTO, SaveVolumeOutlineDTO } from '../../../db/types'
-
-export const outlineController = new Hono()
-
-/* ==================== 锚点 ==================== */
-
-/** GET /api/novels/:novelId/outline —— 全篇锚点 */
-outlineController.get('/', (c) => {
-  const novelId = novelIdOf(c)
-  if (novelId === null) return c.json({ message: 'novelId 必须是整数' }, 400)
-
-  const anchor = service.getAnchor(novelId)
-  if (!anchor) return c.json({ message: `novelId=${novelId} 还没有锚点` }, 404)
-  return c.json(anchor)
-})
+import { createChapterRuntime } from '../db/chapterDB'
+import { createOutlineRuntime, type AnchorInput, type VolumeOutlineInput } from '../db/outlineDB'
+import { rememberVolumeOutline, saveVolumeOutlineWithMemory, type VolumeOutlineBundle } from '../service/entityService'
+import { withNovel } from './withNovel'
 
 /**
- * POST /api/novels/:novelId/outline/anchor
+ * 大纲 controller —— 一个动作一次调用。
  *
- * 正常流程用不到 —— 保存第一卷大纲时会自动把锚点写死。
- * 留着是为了"卷还没排，先把骨架定下来"。
- * 锚点已存在时会拒绝，不会覆盖。
+ * 落一卷（卷 + 锚点 + 卷纲）的顺序有意义，绑在 service 里：先写锚点再写卷纲，
+ * 第一卷的快照才和锚点一致、不误报漂移。这里不拆开它。
  */
-outlineController.post('/anchor', async (c) => {
-  const novelId = novelIdOf(c)
-  if (novelId === null) return c.json({ message: 'novelId 必须是整数' }, 400)
+export const saveVolumeOutline = (novelId: number, bundle: VolumeOutlineBundle) =>
+  withNovel(novelId, (database) => saveVolumeOutlineWithMemory(database, novelId, bundle))
 
-  const body = await readJson<CreateAnchorDTO>(c)
-  if (body === undefined) return c.json({ message: '请求体不是合法 JSON' }, 400)
-
-  try {
-    return c.json(service.saveAnchor({ ...body, novel_id: novelId }), 201)
-  } catch (e) {
-    return fail(c, e)
-  }
-})
-
-/* ==================== 卷大纲 ==================== */
-
-/** GET /api/novels/:novelId/outline/volumes */
-outlineController.get('/volumes', (c) => {
-  const novelId = novelIdOf(c)
-  if (novelId === null) return c.json({ message: 'novelId 必须是整数' }, 400)
-  return c.json(service.listVolumeOutlines(novelId))
-})
+/** 大纲索引与漂移检查：全篇锚点 + 每卷的卷纲 + 漂移的卷号 */
+export const readOutline = (novelId: number) =>
+  withNovel(novelId, (database) => {
+    const runtime = createOutlineRuntime(database)
+    return {
+      anchor: runtime.currentAnchor(),
+      volumeOutlines: runtime.listVolumeOutlines(),
+      driftedVolumeIds: runtime.listDriftedVolumeIds(),
+    }
+  })
 
 /**
- * GET /api/novels/:novelId/outline/volumes/:volumeId
+ * 只写锚点与卷纲，**不建卷**（卷已存在时用）。
  *
- * 返回里带 `anchorDrift`：这一卷当时回填的锚点和现在生效的是不是一致。
+ * 一次要写两张表就包一个事务：半成品的锚点比没锚点更难查。
+ * 写完照样发记忆 —— 它是"落了一条卷纲"这件事，不因为走的不是工具层就免掉。
  */
-outlineController.get('/volumes/:volumeId', (c) => {
-  const volumeId = parseId(c.req.param('volumeId'))
-  if (volumeId === null) return c.json({ message: 'volumeId 必须是整数' }, 400)
+export const saveAnchorWithOutline = (
+  novelId: number,
+  input: { anchor?: AnchorInput; volumeOutline?: VolumeOutlineInput },
+) =>
+  withNovel(novelId, (database) => {
+    const runtime = createOutlineRuntime(database)
+    const result = database.transaction(() => ({
+      anchor: input.anchor ? runtime.saveAnchor(input.anchor) : null,
+      outline: input.volumeOutline ? runtime.saveVolumeOutline(input.volumeOutline) : null,
+    }))()
 
-  const outline = service.getVolumeOutline(volumeId)
-  if (!outline) return c.json({ message: `volumeId=${volumeId} 还没有大纲` }, 404)
-  return c.json(outline)
-})
+    if (result.outline) {
+      const outline = result.outline.outline
+      const volume = createChapterRuntime(database).listVolumes().find((item) => item.id === outline.volumeId)
+      rememberVolumeOutline(novelId, {
+        volumeId: outline.volumeId,
+        volumeName: volume?.name ?? `第${outline.volumeId}卷`,
+        volume: { id: outline.volumeId, name: volume?.name ?? '', no: volume?.no },
+        direction: input.anchor,
+        structureType: outline.structureType,
+        acts: outline.acts,
+      })
+    }
+    return result
+  })
 
-/**
- * POST /api/novels/:novelId/outline/volumes
- *
- * body 是 SaveVolumeOutlineDTO：卷 + 本卷大纲 + 锚点 + 章纲数组一起提交。
- * 整卷一个事务，失败全回滚 —— 不会留下"一卷只有一半章节"的库。
- *
- * 重跑同一卷是安全的：章节按 idx UPSERT，已写的正文不会被碰。
- * 返回里的 `orphaned` 是"原来属于这一卷、这次名单里没有"的章号，
- * **只报不删** —— 删章会级联带走正文和裁决记录。
- */
-outlineController.post('/volumes', async (c) => {
-  const novelId = novelIdOf(c)
-  if (novelId === null) return c.json({ message: 'novelId 必须是整数' }, 400)
+/** 某一卷的卷纲全文（幕 / 转折点 / 节奏 / 约束），排这一卷时才需要 */
+export const getVolumeOutline = (novelId: number, volumeId: number) =>
+  withNovel(novelId, (database) => createOutlineRuntime(database).getVolumeOutline(volumeId))
 
-  const body = await readJson<SaveVolumeOutlineDTO>(c)
-  if (body === undefined) return c.json({ message: '请求体不是合法 JSON' }, 400)
-
-  try {
-    return c.json(service.saveVolumeOutline({ ...body, novel_id: novelId }), 201)
-  } catch (e) {
-    return fail(c, e)
-  }
-})
-
-/* ==================== 漂移检查 ==================== */
-
-/** GET /api/novels/:novelId/outline/drift —— 哪几卷的锚点对不上了 */
-outlineController.get('/drift', (c) => {
-  const novelId = novelIdOf(c)
-  if (novelId === null) return c.json({ message: 'novelId 必须是整数' }, 400)
-  const drifted = service.listDriftedVolumes(novelId)
-  return c.json({ drifted_volume_ids: drifted, count: drifted.length })
-})
-
-/** POST /api/novels/:novelId/outline/check-drift —— 提交前先比一比，不写库 */
-outlineController.post('/check-drift', async (c) => {
-  const novelId = novelIdOf(c)
-  if (novelId === null) return c.json({ message: 'novelId 必须是整数' }, 400)
-
-  const body = await readJson<Parameters<typeof service.checkAnchorDrift>[1]>(c)
-  if (body === undefined) return c.json({ message: '请求体不是合法 JSON' }, 400)
-
-  try {
-    return c.json(service.checkAnchorDrift(novelId, body))
-  } catch (e) {
-    return fail(c, e)
-  }
-})
+/** 卷列表，hasOutline 现算 —— 卷表上没有这一列，存副本就会和事实不同步 */
+export const listVolumes = (novelId: number) =>
+  withNovel(novelId, (database) => {
+    const outlined = new Set(createOutlineRuntime(database).listVolumeOutlines().map((item) => item.volumeId))
+    return createChapterRuntime(database)
+      .listVolumes()
+      .map((volume) => ({ ...volume, hasOutline: outlined.has(volume.id) }))
+  })

@@ -1,52 +1,64 @@
-import { openCatalogDatabase, openNovelDatabase } from './novelDatabase'
-import { createMemoryStore, type MemoryRecord } from './memoryStore'
-import { createSiliconFlowEmbeddingClient } from './embedding'
-import { createWorldRuntime, type WorldInput } from '../SAgent/worldRuntime'
-import { createCharacterRuntime, type CharacterInput, type CharacterPatch } from '../SAgent/characterRuntime'
-import { createLocationRuntime, type LocationInput } from '../SAgent/locationRuntime'
-import { createOutlineRuntime, type AnchorInput, type VolumeOutlineInput } from '../SAgent/outlineRuntime'
-import { createChapterRuntime, type ChapterOutlineInput, type ChapterOutlinePatch, type TextStage } from '../SAgent/chapterRuntime'
 import {
-  rememberChapterOutline,
-  rememberChapterText,
-  rememberCharacter,
-  rememberVolumeOutline,
-  rememberWorld,
-  saveCharacterWithMemory,
-  saveChapterOutlinesWithMemory,
-  saveLocationWithMemory,
-} from './novelEffects'
+  catalog,
+  chapter as chapterApi,
+  character as characterApi,
+  location as locationApi,
+  memory as memoryApi,
+  outline as outlineApi,
+  workflow as workflowApi,
+  world as worldApi,
+  type ChapterOutlineInput,
+  type ChapterOutlinePatch,
+  type TextStage,
+  type WorldInput,
+  type NovelCreateInput,
+  type CharacterInput,
+  type CharacterPatch,
+  type LocationInput,
+} from '../my-app'
 import { createSAgent } from '../SAgent'
-import { readWorkflowStatus, readWorkflowSummary } from './workflowStatus'
-
-type Novel = { id: number; slug: string; title: string; genre: string; style: string; description: string; logline: string; target_words: number; themes: string; status: string; created_at: string; updated_at: string }
-type NovelCreateBody = Partial<Omit<Novel, 'id' | 'created_at' | 'updated_at'>> & { themes?: string[] | string; target_words?: number }
-const json = (body: unknown, status = 200): Response => Response.json(body, { status, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type', 'Access-Control-Allow-Methods': 'GET,POST,PUT,OPTIONS' } })
-const bad = (message: string, status = 400) => json({ message }, status)
-const catalogNovel = (id: number): Novel | null => { const database = openCatalogDatabase(); try { return database.query('SELECT * FROM novels WHERE id = ?').get(id) as Novel | null } finally { database.close() } }
-const listNovels = (): Novel[] => { const database = openCatalogDatabase(); try { return database.query('SELECT * FROM novels ORDER BY updated_at DESC, id DESC').all() as Novel[] } finally { database.close() } }
-const embeddingClient = createSiliconFlowEmbeddingClient()
-const chatAgents = new Map<number, ReturnType<typeof createSAgent>>()
-const embedOrUndefined = async (input: string): Promise<number[] | undefined> => { try { return (await embeddingClient.embed([input]))[0] } catch (error) { console.warn(error instanceof Error ? error.message : error); return undefined } }
-
-/* ==================== 公共路由辅助 ==================== */
 
 /**
- * 打开这本小说的 per-novel 库、执行 action、关掉它。
- * 小说不存在时直接返回 404 Response —— 调用方用 isResponse 判一下就行。
+ * HTTP 传输层 —— **只做传输**。
  *
- * 有了它，每条路由只要写「业务」那一句；「先找小说、再开库、再关库」
- * 这段路只有一种写法，就不会出现某条路由漏关连接或开错库。
+ * 这里不写 SQL、不开库、不发记忆、不做业务判断。要做的那几件事都在
+ * `agent/my-app/` 后面：index.ts（门面）→ controller → service → db → SQLite。
+ *
+ * 写完这个文件如果发现自己在 `import createXxxRuntime`，说明分层漏了 ——
+ * 上一版就是这么长出 14 处越级 import 的，路由自己开库、自己记记忆，
+ * 于是「走 HTTP 落库不进记忆链路」这种分叉迟早出现。
+ * 现在每条路由要做的事只有一件：**把请求变成一个门面调用，把结果变成 JSON**。
  */
-const isResponse = (value: unknown): value is Response => value instanceof Response
-const withNovelDb = <T>(rawId: string | undefined, action: (novel: Novel, database: ReturnType<typeof openNovelDatabase>) => T): T | Response => {
-  const novel = catalogNovel(Number(rawId))
-  if (!novel) return bad('小说不存在', 404)
-  const database = openNovelDatabase(novel.slug)
-  try { return action(novel, database) } finally { database.close() }
+
+/** 路由动作可能「什么都没找到」，用 null 表达，别用 Response 混在返回值里 */
+const notFound = (message: string) => ({ __notFound: message })
+const isNotFound = (value: unknown): value is { __notFound: string } =>
+  typeof value === 'object' && value !== null && '__notFound' in value
+
+const json = (body: unknown, status = 200): Response => Response.json(body, { status, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type', 'Access-Control-Allow-Methods': 'GET,POST,PUT,OPTIONS' } })
+const bad = (message: string, status = 400) => json({ message }, status)
+
+/** novelId 有效吗 —— 路径里的 :id 在这里是字符串 */
+const novelIdOf = (raw: string | undefined): number => {
+  const id = Number(raw)
+  if (!Number.isInteger(id) || id <= 0) throw new TypeError('缺少有效的 novelId')
+  if (!catalog.getNovel(id)) throw new Error(`小说不存在：novelId=${id}`)
+  return id
 }
 
-/** 章纲/卷的入参用库里的列名（snake）；转成 runtime 的驼峰 */
+/**
+ * 可选的 novelId（来自 `?novelId=`）—— 给那些**只有 chapterId** 的接口用。
+ *
+ * chapterId 是每本书各自从 1 开始的自增主键，多本书之间会撞。
+ * 所以正文/章纲这三个接口必须能说清"是哪本书的第几章"；说不清就不猜，报 400。
+ */
+const novelIdHint = (url: URL): number | undefined => {
+  const raw = url.searchParams.get('novelId')
+  if (raw === null) return undefined
+  return novelIdOf(raw)
+}
+
+/** 章纲/卷的入参用库里的列名（snake）；转成 db 层入参（camel）。字段名在这里对齐一次。 */
 type VolumeBody = { no?: number; name?: string; goal?: string; from_state?: string; to_state?: string; start_chapter?: number; end_chapter?: number }
 type ChapterBody = {
   volume_id?: number; volume_no?: number; index?: number; title?: string
@@ -56,7 +68,6 @@ type ChapterBody = {
   chapters?: ChapterBody[]
 }
 
-/** 请求体（snake，库与前端在说这个）→ runtime 入参（camel）。字段名在这里对齐一次。 */
 const toChapterInput = (body: ChapterBody): ChapterOutlineInput => ({
   index: Number(body.index),
   title: String(body.title ?? ''),
@@ -70,273 +81,214 @@ const toChapterInput = (body: ChapterBody): ChapterOutlineInput => ({
   wordCountTarget: body.word_count_target,
 })
 
+/** 聊天用的 agent 按小说缓存：会话状态在 agent 内部，重建就丢上下文了 */
+const chatAgents = new Map<number, ReturnType<typeof createSAgent>>()
+
 const server = Bun.serve({
   port: 3000,
   async fetch(request) {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type', 'Access-Control-Allow-Methods': 'GET,POST,PUT,OPTIONS' } })
-    const url = new URL(request.url); const parts = url.pathname.split('/').filter(Boolean)
+    const url = new URL(request.url)
+    const parts = url.pathname.split('/').filter(Boolean)
+    const novelPath = parts[0] === 'api' && parts[1] === 'novels' && parts[2] !== undefined
+
     try {
       if (url.pathname === '/api/health') return json({ ok: true, storage: 'catalog + per-novel sqlite' })
-      if (url.pathname === '/api/novels' && request.method === 'GET') return json(listNovels())
-      if (url.pathname === '/api/novels' && request.method === 'POST') {
-        const body = await request.json() as NovelCreateBody
-        if (!body.slug || !body.title || !/^[a-z0-9][a-z0-9-]{0,47}$/.test(body.slug)) return bad('slug 必须是小写字母、数字或连字符')
-        const targetWords = body.target_words ?? 0
-        if (!Number.isInteger(targetWords) || targetWords < 0) return bad('target_words 必须是非负整数')
-        let themes = '[]'
-        if (body.themes !== undefined) {
-          if (Array.isArray(body.themes)) {
-            if (!body.themes.every((theme) => typeof theme === 'string')) return bad('themes 必须是字符串数组')
-            themes = JSON.stringify(body.themes)
-          } else {
-            try {
-              const parsed = JSON.parse(body.themes)
-              if (!Array.isArray(parsed) || !parsed.every((theme) => typeof theme === 'string')) return bad('themes 必须是字符串数组')
-              themes = JSON.stringify(parsed)
-            } catch { return bad('themes 必须是合法 JSON 数组') }
-          }
-        }
-        const catalog = openCatalogDatabase()
-        try { const result = catalog.query('INSERT INTO novels (slug, title, genre, style, description, logline, target_words, themes, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(body.slug, body.title, body.genre ?? '', body.style ?? '', body.description ?? '', body.logline ?? '', targetWords, themes, body.status ?? 'draft'); const novel = catalog.query('SELECT * FROM novels WHERE id = ?').get(Number(result.lastInsertRowid)) as Novel; openNovelDatabase(novel.slug).close(); return json(novel, 201) } finally { catalog.close() }
+
+      /* ==================== 书架 ==================== */
+      if (parts[0] === 'api' && parts[1] === 'novels' && !parts[2]) {
+        if (request.method === 'GET') return json(catalog.listNovels())
+        if (request.method === 'POST') return json(catalog.createNovel(await request.json() as NovelCreateInput), 201)
       }
-      if (parts[0] === 'api' && parts[1] === 'novels' && parts[2] && parts[3] === 'worlds') {
-        const novel = catalogNovel(Number(parts[2])); if (!novel) return bad('小说不存在', 404)
-        const database = openNovelDatabase(novel.slug)
-        try {
-          const runtime = createWorldRuntime(database)
-          if (request.method === 'GET') return json(runtime.list())
-          if (request.method === 'POST') {
-            const body = await request.json() as WorldInput
-            const world = runtime.create(body)
-            // HTTP 落库也要进记忆链路 —— 与 save_world 工具走同一份记忆格式（见 novelEffects）
-            rememberWorld(novel.id, world)
-            return json(world, 201)
-          }
-        } finally { database.close() }
+      if (novelPath && !parts[3] && request.method === 'GET') {
+        const novel = catalog.getNovel(novelIdOf(parts[2]))
+        return novel ? json(novel) : bad('小说不存在', 404)
       }
-      if (parts[0] === 'api' && parts[1] === 'novels' && parts[2] && parts[3] === 'chat' && request.method === 'POST') {
-        const novel = catalogNovel(Number(parts[2])); if (!novel) return bad('小说不存在', 404)
-        const body = await request.json() as { message?: string; history?: Array<{ role: 'user' | 'assistant'; content: string }> }
-        if (!body.message?.trim()) return bad('消息不能为空')
-        const history = Array.isArray(body.history) ? body.history.filter((item) => (item.role === 'user' || item.role === 'assistant') && typeof item.content === 'string').slice(-24) : []
-        const agent = chatAgents.get(novel.id) ?? createSAgent()
-        chatAgents.set(novel.id, agent)
-        const result = await agent.invoke({ novelId: novel.id, slug: novel.slug, messages: [...history, { role: 'user', content: body.message.trim() }] }, { configurable: { novelId: novel.id } })
-        const messages = (result as { messages?: Array<{ getType?: () => string; content?: unknown }> }).messages ?? []
-        const answer = [...messages].reverse().find((item) => item.getType?.() === 'ai' || typeof item.content === 'string')?.content
-        return json({ message: typeof answer === 'string' ? answer : JSON.stringify(answer ?? '中心 Agent 暂无回复') })
-      }
-      if (parts[0] === 'api' && parts[1] === 'novels' && parts[2] && parts[3] === 'agents' && request.method === 'GET') {
-        const novel = catalogNovel(Number(parts[2])); if (!novel) return bad('小说不存在', 404)
-        const database = openNovelDatabase(novel.slug)
-        try { return json(readWorkflowStatus(database)) } finally { database.close() }
-      }
-      if (parts[0] === 'api' && parts[1] === 'novels' && parts[2] && parts[3] === 'chapters' && request.method === 'GET') {
-        const novel = catalogNovel(Number(parts[2])); if (!novel) return bad('小说不存在', 404); const database = openNovelDatabase(novel.slug)
-        try { return json(database.query(`SELECT c.id, c.idx, c.title, c.volume_id, c.goal, c.conflict, c.hook, c.emotion, c.summary, coalesce((SELECT t.stage FROM chapter_texts t WHERE t.chapter_id = c.id AND t.stage = 'final'), (SELECT t.stage FROM chapter_texts t WHERE t.chapter_id = c.id AND t.stage = 'draft'), 'none') AS textStage FROM chapters c ORDER BY c.idx`).all()) } finally { database.close() }
-      }
-      if (parts[0] === 'api' && parts[1] === 'novels' && parts[2] && !parts[3] && request.method === 'GET') { const novel = catalogNovel(Number(parts[2])); return novel ? json(novel) : bad('小说不存在', 404) }
-      if (parts[0] === 'api' && parts[1] === 'chapters' && parts[2] && parts[3] === 'text') {
-        const chapterId = Number(parts[2]); const stage = url.searchParams.get('stage') ?? 'draft'
-        for (const novel of listNovels()) {
-          const database = openNovelDatabase(novel.slug)
-          try {
-            const runtime = createChapterRuntime(database)
-            const chapter = runtime.getChapterById(chapterId)
-            if (!chapter) continue
-            if (request.method === 'GET') return json(database.query('SELECT * FROM chapter_texts WHERE chapter_id = ? AND stage = ?').get(chapterId, stage) ?? { chapter_id: chapterId, stage, text: '' })
-            if (request.method === 'PUT') {
-              const body = await request.json() as { text?: string; summary?: string; ends_with?: string }
-              // 走 runtime 落库，不再内联 SQL —— 顺手把「手写终稿」也接进记忆链路
-              // （与 generate_chapter 落 final 用同一份格式，见 novelEffects 的 rememberChapterText）
-              runtime.saveText(chapter.idx, { stage: stage as TextStage, text: body.text ?? '', summary: body.summary, endsWith: body.ends_with })
-              rememberChapterText(novel.id, { chapterId, chapterIdx: chapter.idx, stage, text: body.text ?? '', summary: body.summary, endsWith: body.ends_with })
-              return json(runtime.getText(chapter.idx, stage as TextStage))
-            }
-          } finally { database.close() }
-        }
-        return bad('章节不存在', 404)
-      }
-      if (parts[0] === 'api' && parts[1] === 'novels' && parts[2] && parts[3] === 'memories') {
-        const novel = catalogNovel(Number(parts[2])); if (!novel) return bad('小说不存在', 404)
-        const database = openNovelDatabase(novel.slug)
-        try {
-          const store = createMemoryStore(database)
-          if (request.method === 'POST') {
-            const body = await request.json() as MemoryRecord
-            if (!body.layer || !body.title || !body.content || !body.sourceType || !body.sourceId) return bad('记忆条目缺少 layer、title、content、sourceType 或 sourceId')
-            const embedding = body.embedding ?? await embedOrUndefined(`${body.title}\n${body.content}`)
-            return json(store.upsert({ ...body, novelId: novel.slug, embedding }), 201)
-          }
-          if (request.method === 'GET') {
-            const query = url.searchParams.get('q') ?? ''
-            if (!query.trim()) return bad('缺少查询参数 q')
-            const parseOptionalNumber = (value: string | null): number | undefined => value == null ? undefined : Number(value)
-            const embedding = await embedOrUndefined(query)
-            return json(store.search({ novelId: novel.slug, query, volumeId: parseOptionalNumber(url.searchParams.get('volumeId')), chapterId: parseOptionalNumber(url.searchParams.get('chapterId')), embedding, limit: Number(url.searchParams.get('limit') ?? 10) }))
-          }
-        } finally { database.close() }
-      }
-      if (parts[0] === 'api' && parts[1] === 'novels' && parts[2] && parts[3] === 'portraits' && request.method === 'GET') {
-        const novel = catalogNovel(Number(parts[2])); if (!novel) return bad('小说不存在', 404)
-        const database = openNovelDatabase(novel.slug)
-        try {
-          return json(database.query(`SELECT p.*, c.name AS character_name FROM character_portraits p LEFT JOIN characters c ON c.id = p.character_id WHERE p.version = (SELECT max(p2.version) FROM character_portraits p2 WHERE p2.novel_id = p.novel_id AND p2.character_id = p.character_id) ORDER BY p.character_id`).all())
-        } finally { database.close() }
-      }
-      /* ==================== 工作流摘要 ==================== */
-      if (parts[0] === 'api' && parts[1] === 'novels' && parts[2] && parts[3] === 'workflow' && request.method === 'GET') {
-        // 只回简化结构（阶段 + 各阶段计数），不回 generation_tasks 的原始字段 —— 那是内部实现
-        return withNovelDb(parts[2], (_novel, database) => json(readWorkflowSummary(database)))
+
+      /* ==================== 世界观 ==================== */
+      if (novelPath && parts[3] === 'worlds') {
+        const novelId = novelIdOf(parts[2])
+        if (request.method === 'GET') return json(worldApi.listWorlds(novelId))
+        if (request.method === 'POST') return json(worldApi.saveWorld(novelId, await request.json() as WorldInput), 201)
       }
 
       /* ==================== 角色 ==================== */
-      if (parts[0] === 'api' && parts[1] === 'novels' && parts[2] && parts[3] === 'characters') {
+      if (novelPath && parts[3] === 'characters') {
+        const novelId = novelIdOf(parts[2])
         const characterId = parts[4]
-        if (request.method === 'PUT' && characterId) {
-          const patch = await request.json() as CharacterPatch
-          return withNovelDb(parts[2], (novel, database) => {
-            const updated = createCharacterRuntime(database).update(Number(characterId), patch)
-            if (!updated) return bad('角色不存在', 404)
-            // 改卡也是一次落库：不记的话，改完这条事实在记忆里就不存在
-            rememberCharacter(novel.id, updated)
-            return json(updated)
-          })
-        }
+        if (request.method === 'GET' && !characterId) return json(characterApi.listCharacters(novelId))
         if (request.method === 'POST' && !characterId) {
-          const body = await request.json() as CharacterInput
-          return withNovelDb(parts[2], (novel, database) => {
-            // 与 save_character 工具同一个入口：落库 + 回填章纲里的出场引用 + 发记忆
-            const saved = saveCharacterWithMemory(database, novel.id, body)
-            // 201 = 新建，200 = 同名卡已存在（没有重复建）
-            return json(saved.character, saved.created ? 201 : 200)
-          })
+          // 201 = 新建，200 = 同名卡已存在（没有重复建）
+          const saved = characterApi.saveCharacter(novelId, await request.json() as CharacterInput)
+          return json(saved.character, saved.created ? 201 : 200)
         }
-        if (request.method === 'GET' && !characterId) {
-          return withNovelDb(parts[2], (_novel, database) => json(createCharacterRuntime(database).list()))
+        if (request.method === 'PUT' && characterId) {
+          const updated = characterApi.updateCharacter(novelId, Number(characterId), await request.json() as CharacterPatch)
+          return updated ? json(updated) : bad('角色不存在', 404)
         }
       }
 
       /* ==================== 地点 ==================== */
-      if (parts[0] === 'api' && parts[1] === 'novels' && parts[2] && parts[3] === 'locations') {
-        if (request.method === 'GET') return withNovelDb(parts[2], (_novel, database) => json(createLocationRuntime(database).list()))
+      if (novelPath && parts[3] === 'locations') {
+        const novelId = novelIdOf(parts[2])
+        if (request.method === 'GET') return json(locationApi.listLocations(novelId))
         if (request.method === 'POST') {
-          const body = await request.json() as LocationInput
-          return withNovelDb(parts[2], (novel, database) => {
-            // 与 save_location 工具同一个入口：落库 + 回填挂在它名下的子地点 + 发记忆
-            const saved = saveLocationWithMemory(database, novel.id, body)
-            return json(saved.location, saved.created ? 201 : 200)
-          })
+          const saved = locationApi.saveLocation(novelId, await request.json() as LocationInput)
+          return json(saved.location, saved.created ? 201 : 200)
         }
       }
 
       /* ==================== 大纲（锚点 + 卷纲） ==================== */
-      if (parts[0] === 'api' && parts[1] === 'novels' && parts[2] && parts[3] === 'outline') {
-        if (request.method === 'GET') {
-          return withNovelDb(parts[2], (_novel, database) => {
-            const runtime = createOutlineRuntime(database)
-            return json({ anchor: runtime.currentAnchor(), volumeOutlines: runtime.listVolumeOutlines(), driftedVolumeIds: runtime.listDriftedVolumeIds() })
-          })
-        }
+      if (novelPath && parts[3] === 'outline') {
+        const novelId = novelIdOf(parts[2])
+        if (request.method === 'GET') return json(outlineApi.readOutline(novelId))
         if (request.method === 'POST') {
-          const body = await request.json() as { anchor?: AnchorInput; volumeOutline?: VolumeOutlineInput }
+          const body = await request.json() as { anchor?: Parameters<typeof outlineApi.saveAnchorWithOutline>[1]['anchor']; volumeOutline?: Parameters<typeof outlineApi.saveAnchorWithOutline>[1]['volumeOutline'] }
           if (!body?.anchor && !body?.volumeOutline) return bad('请求体至少要有 anchor 或 volumeOutline')
-          return withNovelDb(parts[2], (novel, database) => {
-            const runtime = createOutlineRuntime(database)
-            // 一次要写两张表（锚点 + 卷纲）就包一个事务：半成品的锚点比没锚点更难查
-            const result = database.transaction(() => ({
-              anchor: body.anchor ? runtime.saveAnchor(body.anchor) : null,
-              outline: body.volumeOutline ? runtime.saveVolumeOutline(body.volumeOutline) : null,
-            }))()
-            // 卷纲同样要进记忆链路（工具层的 save_volume_outline 会记，这里不能漏）
-            if (result.outline) {
-              const outline = result.outline.outline
-              const volume = createChapterRuntime(database).listVolumes().find((v) => v.id === outline.volumeId)
-              rememberVolumeOutline(novel.id, {
-                volumeId: outline.volumeId,
-                volumeName: volume?.name ?? `第${outline.volumeId}卷`,
-                volume: { id: outline.volumeId, name: volume?.name ?? '', no: volume?.no },
-                direction: body.anchor,
-                structureType: outline.structureType,
-                acts: outline.acts,
-              })
-            }
-            return json(result, 201)
-          })
+          return json(outlineApi.saveAnchorWithOutline(novelId, body), 201)
         }
       }
 
       /* ==================== 卷 ==================== */
-      if (parts[0] === 'api' && parts[1] === 'novels' && parts[2] && parts[3] === 'volumes') {
-        if (request.method === 'GET') {
-          return withNovelDb(parts[2], (_novel, database) => {
-            const chapters = createChapterRuntime(database)
-            const outlined = new Set(createOutlineRuntime(database).listVolumeOutlines().map((item) => item.volumeId))
-            // hasOutline 现算，卷表上没有这一列（存副本就会和事实不同步）
-            return json(chapters.listVolumes().map((volume) => ({ ...volume, hasOutline: outlined.has(volume.id) })))
-          })
-        }
+      if (novelPath && parts[3] === 'volumes') {
+        const novelId = novelIdOf(parts[2])
+        if (request.method === 'GET') return json(outlineApi.listVolumes(novelId))
         if (request.method === 'POST') {
           const body = await request.json() as VolumeBody
-          return withNovelDb(parts[2], (_novel, database) => {
-            const created = createChapterRuntime(database).createVolume({
-              no: Number(body.no),
-              name: String(body.name ?? ''),
-              goal: body.goal,
-              fromState: body.from_state,
-              toState: body.to_state,
-              startChapter: Number(body.start_chapter),
-              endChapter: Number(body.end_chapter),
-            })
-            return json(created, created.created ? 201 : 200)
+          const created = chapterApi.createVolume(novelId, {
+            no: Number(body.no),
+            name: String(body.name ?? ''),
+            goal: body.goal,
+            fromState: body.from_state,
+            toState: body.to_state,
+            startChapter: Number(body.start_chapter),
+            endChapter: Number(body.end_chapter),
           })
+          return json(created, created.created ? 201 : 200)
         }
       }
 
-      /* ==================== 章纲（新增 / 修改） ==================== */
-      if (parts[0] === 'api' && parts[1] === 'novels' && parts[2] && parts[3] === 'chapters' && request.method === 'POST') {
-        const body = await request.json() as ChapterBody
-        // 入参与工具层 save_chapter_outline 对齐：传 chapters 数组。
-        // 传一条 = 单章落库/重跑；传一整卷 = 一次落完。逐条提交，某条失败不影响其余。
-        // （此前只认单条字段，传数组会被**静默忽略**——收了请求、什么都没落，也不报错。）
-        const drafts = Array.isArray(body.chapters) && body.chapters.length > 0 ? body.chapters : [body]
-        return withNovelDb(parts[2], (novel, database) => {
-          const runtime = createChapterRuntime(database)
-          const volumeId = body.volume_id ?? (body.volume_no === undefined ? undefined : runtime.getVolumeByNo(Number(body.volume_no))?.id)
-          if (volumeId === undefined) return bad('缺少 volume_id（或 volume_no），或该卷不存在')
-          const volume = runtime.listVolumes().find((item) => item.id === volumeId)
-          if (!volume) return bad('该卷不存在')
-          const report = saveChapterOutlinesWithMemory(database, novel.id, volume.no, drafts.map(toChapterInput))
+      /* ==================== 章节 ==================== */
+      if (novelPath && parts[3] === 'chapters') {
+        const novelId = novelIdOf(parts[2])
+        if (request.method === 'GET') return json(chapterApi.listChapterSummaries(novelId))
+        if (request.method === 'POST') {
+          const body = await request.json() as ChapterBody
+          // 入参与工具层 save_chapter_outline 对齐：传 chapters 数组。
+          // 传一条 = 单章落库/重跑；传一整卷 = 一次落完。逐条提交，某条失败不影响其余。
+          const drafts = Array.isArray(body.chapters) && body.chapters.length > 0 ? body.chapters : [body]
+          // volume_no 优先（对外形态），其次 volume_id（前端已知 id 的情况）
+          const volumeNo = body.volume_no
+            ?? (body.volume_id === undefined
+              ? undefined
+              : chapterApi.listVolumes(novelId).find((volume) => volume.id === body.volume_id)?.no)
+          if (volumeNo === undefined) return bad('缺少 volume_id（或 volume_no），或该卷不存在')
+          const report = chapterApi.saveChapterOutlines(novelId, volumeNo, drafts.map(toChapterInput))
           // 一条都没落成 = 请求本身有问题；部分落成仍算成功，失败的那几条在报告里
           return json(report, report.saved.length === 0 ? 400 : 201)
-        })
+        }
       }
 
-      if (parts[0] === 'api' && parts[1] === 'chapters' && parts[2] && !parts[3] && request.method === 'PUT') {
-        // 章纲补丁的字段名：库/前端用 snake（word_count_target），runtime 内部是驼峰 —— 在这里对齐一次
-        const raw = await request.json() as ChapterOutlinePatch & { word_count_target?: number }
-        const { word_count_target: snakeTarget, ...rest } = raw
-        const patch: ChapterOutlinePatch = { ...rest, wordCountTarget: raw.wordCountTarget ?? snakeTarget }
+      /* ---- 按 chapterId 定位的章节接口（没有 novelId，挨本找） ---- */
+      if (parts[0] === 'api' && parts[1] === 'chapters' && parts[2]) {
         const chapterId = Number(parts[2])
-        // 章 id 不带宽表，得挨本找它属于哪本书（与 /api/chapters/:id/text 同一种做法）
-        for (const novel of listNovels()) {
-          const database = openNovelDatabase(novel.slug)
-          try {
-            const runtime = createChapterRuntime(database)
-            if (!runtime.getChapterById(chapterId)) continue
-            const updated = runtime.updateChapter(chapterId, patch)
-            if (updated) rememberChapterOutline(novel.id, updated, updated.volumeId)
-            return json(updated)
-          } finally { database.close() }
+        if (parts[3] === 'text') {
+          const stage = (url.searchParams.get('stage') ?? 'draft') as TextStage
+          const novelId = novelIdHint(url)
+          if (request.method === 'GET') {
+            const text = chapterApi.getChapterTextById(chapterId, stage, novelId)
+            if (!text && novelId === undefined) return bad('该 chapter_id 在多本书里都存在，请带 novelId 参数', 400)
+            return json(text ?? { chapter_id: chapterId, stage, text: '' })
+          }
+          if (request.method === 'PUT') {
+            const body = await request.json() as { text?: string; summary?: string; ends_with?: string }
+            const saved = chapterApi.saveChapterTextById(chapterId, stage, {
+              text: body.text ?? '',
+              summary: body.summary,
+              endsWith: body.ends_with,
+            }, novelId)
+            if (!saved) return bad('章节不存在', 404)
+            return json(saved)
+          }
         }
-        return bad('章节不存在', 404)
+        if (!parts[3] && request.method === 'PUT') {
+          // 章纲补丁的字段名：库/前端用 snake（word_count_target），db 内部是驼峰 —— 在这里对齐一次
+          const raw = await request.json() as ChapterOutlinePatch & { word_count_target?: number }
+          const { word_count_target: snakeTarget, ...rest } = raw
+          const updated = chapterApi.updateChapterById(
+            chapterId,
+            { ...rest, wordCountTarget: raw.wordCountTarget ?? snakeTarget },
+            novelIdHint(url),
+          )
+          // 找不到就是找不到：不要拿"第一本"的第一章当答案
+          if (!updated) return bad('章节不存在', 404)
+          return json(updated)
+        }
+      }
+
+      /* ==================== 工作流 ==================== */
+      if (novelPath && parts[3] === 'workflow' && request.method === 'GET') {
+        // 只回简化结构（阶段 + 各阶段计数），不回 generation_tasks 的原始字段 —— 那是内部实现
+        return json(workflowApi.getWorkflowSummary(novelIdOf(parts[2])))
+      }
+      if (novelPath && parts[3] === 'agents' && request.method === 'GET') {
+        return json(workflowApi.getWorkflowLamps(novelIdOf(parts[2])))
+      }
+
+      /* ==================== 记忆与画像（只读 / 直写） ==================== */
+      if (novelPath && parts[3] === 'memories') {
+        const novelId = novelIdOf(parts[2])
+        if (request.method === 'POST') {
+          const body = await request.json() as { layer?: string; title?: string; content?: string; sourceType?: string; sourceId?: string; volumeId?: number; chapterId?: number }
+          if (!body.layer || !body.title || !body.content || !body.sourceType || !body.sourceId) {
+            return bad('记忆条目缺少 layer、title、content、sourceType 或 sourceId')
+          }
+          const embedding = await memoryApi.embedOrUndefined(`${body.title}\n${body.content}`)
+          return json(memoryApi.upsertNovelMemory(novelId, { ...body, novelId: '', embedding } as never), 201)
+        }
+        if (request.method === 'GET') {
+          const query = url.searchParams.get('q') ?? ''
+          if (!query.trim()) return bad('缺少查询参数 q')
+          const parseOptionalNumber = (value: string | null): number | undefined => (value == null ? undefined : Number(value))
+          return json(memoryApi.searchNovelMemory(novelId, query, {
+            volumeId: parseOptionalNumber(url.searchParams.get('volumeId')),
+            chapterId: parseOptionalNumber(url.searchParams.get('chapterId')),
+            embedding: await memoryApi.embedOrUndefined(query),
+            limit: Number(url.searchParams.get('limit') ?? 10),
+          }))
+        }
+      }
+      if (novelPath && parts[3] === 'portraits' && request.method === 'GET') {
+        return json(memoryApi.listCharacterPortraits(novelIdOf(parts[2])))
+      }
+
+      /* ==================== 中心 Agent ==================== */
+      if (novelPath && parts[3] === 'chat' && request.method === 'POST') {
+        const novelId = novelIdOf(parts[2])
+        const novel = catalog.getNovel(novelId)!
+        const body = await request.json() as { message?: string; history?: Array<{ role: 'user' | 'assistant'; content: string }> }
+        if (!body.message?.trim()) return bad('消息不能为空')
+        const history = Array.isArray(body.history)
+          ? body.history.filter((item) => (item.role === 'user' || item.role === 'assistant') && typeof item.content === 'string').slice(-24)
+          : []
+        const agent = chatAgents.get(novelId) ?? createSAgent()
+        chatAgents.set(novelId, agent)
+        const result = await agent.invoke(
+          { novelId, slug: novel.slug, messages: [...history, { role: 'user', content: body.message.trim() }] },
+          { configurable: { novelId } },
+        )
+        const messages = (result as { messages?: Array<{ getType?: () => string; content?: unknown }> }).messages ?? []
+        const answer = [...messages].reverse().find((item) => item.getType?.() === 'ai' || typeof item.content === 'string')?.content
+        return json({ message: typeof answer === 'string' ? answer : JSON.stringify(answer ?? '中心 Agent 暂无回复') })
       }
 
       return bad('接口不存在', 404)
     } catch (error) {
       const message = error instanceof Error ? error.message : '服务器错误'
-      // runtime 的入参校验一律抛 TypeError —— 那是 400（请求不对），不是 500（服务器炸了）
-      return bad(message, error instanceof TypeError ? 400 : 500)
+      // db 层入参校验一律抛 TypeError —— 那是 400（请求不对），不是 500（服务器炸了）
+      if (error instanceof TypeError) return bad(message, 400)
+      if (/^小说不存在/.test(message)) return bad(message, 404)
+      return bad(message, 500)
     }
   },
 })

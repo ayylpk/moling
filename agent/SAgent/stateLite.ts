@@ -1,25 +1,13 @@
 import { Annotation, MessagesAnnotation } from '@langchain/langgraph'
-import { openCatalogDatabase, openNovelDatabase } from '../storage/novelDatabase'
-
-export type Phase = 'init' | 'world' | 'cast' | 'outline' | 'prose' | 'polish' | 'done'
-export const PHASE_ORDER: Phase[] = ['init', 'world', 'cast', 'outline', 'prose', 'polish', 'done']
+import { catalog, state as stateApi } from '../my-app'
 
 /**
- * 「这本小说走到哪一步了」——**全项目只有这一个判据**。
- *
- * 中心 Agent 的状态快照和 storage 的 /workflow 接口都要回答这个问题。
- * 各写一份的话，两边迟早给出不同的阶段（页面说"正在整理大纲"、Agent 说"还没世界观"），
- * 而那种不一致没人能一眼看出是谁错了。
- *
- * 按「缺什么往后退」推：没世界观 → init；没卷 → world；没章 → outline；有定稿 → polish；否则 prose。
+ * 阶段判据住在 my-app 的 shared/ 里（后端的 /workflow 也要用它）。
+ * 这里原样转出，SAgent 内部与外部的引用都不用改。
  */
-export const phaseOf = (input: { hasWorld: boolean; volumes: number; chapters: number; finalized: number }): Phase => {
-  if (!input.hasWorld) return 'init'
-  if (input.volumes === 0) return 'world'
-  if (input.chapters === 0) return 'outline'
-  if (input.finalized > 0) return 'polish'
-  return 'prose'
-}
+import { phaseOf, PHASE_ORDER, type Phase } from '../my-app/src/shared/phase'
+
+export { phaseOf, PHASE_ORDER, type Phase }
 
 export const NovelState = Annotation.Root({
   messages: MessagesAnnotation.spec.messages,
@@ -93,44 +81,30 @@ export const INITIAL_NOVEL_STATE: NovelStateValue = {
 }
 
 export const deriveNovelState = (novelId: number): Omit<NovelStateValue, 'novelId' | 'slug'> => {
-  const catalog = openCatalogDatabase()
-  // 书名 / 题材 / 文风顺路取回来：createSAgent 的"读小说元数据"这一步就靠它，
-  // 不然中心 Agent 连自己在写哪本书都要额外开一次连接
-  const novel = catalog.query('SELECT slug, title, genre, style FROM novels WHERE id = ?').get(novelId) as
-    | { slug: string; title: string; genre: string; style: string }
-    | null
-  catalog.close()
+  // 读库全交给 my-app：这里既不知道 slug 怎么解析，也不知道"阶段"是怎么判的
+  // （那两条 SQL 与 phaseOf 都在门面后面，与 /workflow 用的是同一份判据）。
+  const novel = catalog.getNovel(novelId)
   if (!novel) throw new Error(`小说不存在：novelId=${novelId}`)
-  const database = openNovelDatabase(novel.slug)
-  try {
-    const world = database.query('SELECT id, version FROM worlds ORDER BY version DESC LIMIT 1').get() as { id: number; version: number } | null
-    const characters = database.query('SELECT id FROM characters ORDER BY id').all() as Array<{ id: number }>
-    const locations = database.query('SELECT id FROM locations ORDER BY id').all() as Array<{ id: number }>
-    const volumes = database.query('SELECT id FROM volumes ORDER BY no').all() as Array<{ id: number }>
-    const drafted = database.query("SELECT c.idx FROM chapters c JOIN chapter_texts t ON t.chapter_id = c.id WHERE t.stage = 'draft' ORDER BY c.idx").all() as Array<{ idx: number }>
-    const finalized = database.query("SELECT c.idx FROM chapters c JOIN chapter_texts t ON t.chapter_id = c.id WHERE t.stage = 'final' ORDER BY c.idx").all() as Array<{ idx: number }>
-    const chapters = database.query('SELECT idx FROM chapters ORDER BY idx').all() as Array<{ idx: number }>
-    const tasks = database.query("SELECT stage, target_key FROM generation_tasks WHERE status = 'done'").all() as Array<{ stage: string; target_key: string }>
-    const phase = phaseOf({ hasWorld: world !== null, volumes: volumes.length, chapters: chapters.length, finalized: finalized.length })
-    const written = finalized.length > 0 ? finalized : drafted
-    return {
-      title: novel.title,
-      genre: novel.genre,
-      style: novel.style,
-      phase,
-      currentVolumeNo: volumes.length || 1,
-      currentChapterIdx: (written.at(-1)?.idx ?? 0) + 1,
-      worldId: world?.id ?? null,
-      worldVersion: world?.version ?? null,
-      characterIds: characters.map((item) => item.id),
-      locationIds: locations.map((item) => item.id),
-      volumeIds: volumes.map((item) => item.id),
-      draftedChapterIdxs: drafted.map((item) => item.idx),
-      finalizedChapterIdxs: finalized.map((item) => item.idx),
-      pendingDemands: [],
-      completedTaskKeys: tasks.map((item) => `${item.stage}:${item.target_key}`),
-    }
-  } finally { database.close() }
+  const snapshot = stateApi.getNovelStateSnapshot(novelId)
+  return {
+    // 书名 / 题材 / 文风顺路带上：中心 Agent 的"读小说元数据"这一步就靠它，
+    // 不然它连自己在写哪本书都要多问一次
+    title: novel.title,
+    genre: novel.genre,
+    style: novel.style,
+    phase: snapshot.phase,
+    currentVolumeNo: snapshot.currentVolumeNo,
+    currentChapterIdx: snapshot.currentChapterIdx,
+    worldId: snapshot.worldId,
+    worldVersion: snapshot.worldVersion,
+    characterIds: snapshot.characterIds,
+    locationIds: snapshot.locationIds,
+    volumeIds: snapshot.volumeIds,
+    draftedChapterIdxs: snapshot.draftedChapterIdxs,
+    finalizedChapterIdxs: snapshot.finalizedChapterIdxs,
+    pendingDemands: [],
+    completedTaskKeys: snapshot.completedTaskKeys,
+  }
 }
 
 export function renderStateBlock(state: Partial<NovelStateValue>): string {

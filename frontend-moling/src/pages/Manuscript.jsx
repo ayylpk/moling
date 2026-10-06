@@ -88,26 +88,26 @@ export default function Manuscript() {
       setDirty(false);
       return undefined;
     }
-    const cached = window.localStorage.getItem(`moling:chapter:${chapter.id}:draft`);
+    const cached = window.localStorage.getItem(`moling:${novel.id}:chapter:${chapter.id}:draft`);
     setText(cached ? JSON.parse(cached).text : '');
     setDirty(false);
     let cancelled = false;
-    api.getChapterText(chapter.id)
+    api.getChapterText(novel.id, chapter.id)
       .then((result) => {
         if (!cancelled && typeof result?.text === 'string' && result.text) setText(result.text);
       })
       .catch(() => undefined);
     return () => { cancelled = true; };
-  }, [chapter?.id]);
+  }, [novel?.id, chapter?.id]);
 
   const saveText = useCallback((reason = 'manual') => {
     if (!chapter?.id || !dirty) return;
     window.localStorage.setItem(
-      `moling:chapter:${chapter.id}:draft`,
+      `moling:${novel.id}:chapter:${chapter.id}:draft`,
       JSON.stringify({ text, savedAt: new Date().toISOString() }),
     );
     setSaving('saving');
-    api.saveChapterText(chapter.id, text)
+    api.saveChapterText(novel.id, chapter.id, text)
       .then(() => {
         setDirty(false);
         setLastSaved(reason === 'auto' ? '自动保存 · 刚刚' : '已保存 · 刚刚');
@@ -117,7 +117,7 @@ export default function Manuscript() {
         setLastSaved('本地草稿已保存 · 服务端待命');
         setSaving('saved');
       });
-  }, [chapter?.id, dirty, text, setSaving]);
+  }, [novel?.id, chapter?.id, dirty, text, setSaving]);
 
   /* 停笔 10 秒自动存 */
   const saveRef = useRef(saveText);

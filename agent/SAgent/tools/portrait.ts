@@ -3,44 +3,16 @@ import { tool } from "langchain"
 import type { RunnableConfig } from "@langchain/core/runnables"
 import * as z from "zod"
 
-import { createSiliconFlowEmbeddingClient } from "../../storage/embedding"
-import { createPortraitPipeline } from "../../storage/portraitPipeline"
-import { createMemoryAutomation } from "../../storage/memoryAutomation"
-import { openCatalogDatabase, openNovelDatabase } from "../../storage/novelDatabase"
-import { createNovelL1Extractor } from "../../storage/l1Extractor"
-import { createAutomaticPortraitUpdater } from "../../storage/automaticPortrait"
-import { createModel } from "../../create_model"
-
-const novelSlugOf = (config?: RunnableConfig): string => {
-  const id = (config?.configurable as Record<string, unknown> | undefined)?.novelId
-  if (typeof id !== "number" || !Number.isInteger(id)) throw new Error("缺少 novelId：调用 SAgent 时请传 configurable.novelId。")
-  const catalog = openCatalogDatabase()
-  try {
-    const novel = catalog.query("SELECT slug FROM novels WHERE id = ?").get(id) as { slug: string } | null
-    if (!novel) throw new Error(`小说不存在：novelId=${id}`)
-    return novel.slug
-  } finally { catalog.close() }
-}
-
-const databaseFor = (config?: RunnableConfig) => openNovelDatabase(novelSlugOf(config))
+import { memory as memoryApi } from "../../my-app"
+import { novelIdOf } from "./context"
 
 export const recordNovelMemoryEvent = tool(
-  async ({ title, content, sourceType, sourceId, characterId, volumeId, chapterId }, config) => {
-    const slug = novelSlugOf(config); const database = databaseFor(config)
-    try {
-      const automation = createMemoryAutomation(database, createSiliconFlowEmbeddingClient())
-      const captured = await automation.capture({ novelId: slug, title, content, sourceType, sourceId, characterId, volumeId, chapterId })
-      if (process.env.MEMORY_AUTO_L1 !== 'false') {
-        const extractor = createNovelL1Extractor(createModel(0.1))
-        const updatePortrait = createAutomaticPortraitUpdater(createModel(0.1), database, slug, createSiliconFlowEmbeddingClient())
-        for (let index = 0; index < 20 && automation.pending() > 0; index += 1) {
-          const result = await automation.processNext(extractor, async (_facts, factIds) => { await updatePortrait(factIds) })
-          if (result.status === 'empty' || result.status === 'failed') break
-        }
-      }
-      return JSON.stringify(captured, null, 2)
-    } finally { database.close() }
-  },
+  async ({ title, content, sourceType, sourceId, characterId, volumeId, chapterId }, config) =>
+    JSON.stringify(
+      await memoryApi.captureAndSettle(novelIdOf(config), { title, content, sourceType, sourceId, characterId, volumeId, chapterId }),
+      null,
+      2,
+    ),
   {
     name: "record_novel_memory_event",
     description: "记录小说运行中的 L0 原始事件。保留原文和来源，不要把未经确认的推测写成 L1 事实。",
@@ -50,8 +22,7 @@ export const recordNovelMemoryEvent = tool(
 
 export const recordNovelMemoryFact = tool(
   async ({ title, content, sourceType, sourceId, characterId, volumeId, chapterId, confidence }, config) => {
-    const slug = novelSlugOf(config); const database = databaseFor(config)
-    try { return JSON.stringify(await createPortraitPipeline(database, createSiliconFlowEmbeddingClient()).recordFact({ novelId: slug, title, content, sourceType, sourceId, characterId, volumeId, chapterId, confidence }), null, 2) } finally { database.close() }
+    JSON.stringify(await memoryApi.recordNovelFact(novelIdOf(config), { title, content, sourceType, sourceId, characterId, volumeId, chapterId }), null, 2)
   },
   {
     name: "record_novel_memory_fact",
@@ -62,9 +33,7 @@ export const recordNovelMemoryFact = tool(
 
 export const updateCharacterPortrait = tool(
   async ({ characterId, profile, tags, basedOnFactIds }, config) => {
-    const slug = novelSlugOf(config)
-    const database = openNovelDatabase(slug)
-    try { return JSON.stringify(await createPortraitPipeline(database, createSiliconFlowEmbeddingClient()).updatePortrait({ novelId: slug, characterId, profile, tags, basedOnFactIds }), null, 2) } finally { database.close() }
+    JSON.stringify(await memoryApi.updateNovelPortrait(novelIdOf(config), { characterId, profile, tags, basedOnFactIds }), null, 2)
   },
   {
     name: "update_character_portrait",
@@ -75,10 +44,11 @@ export const updateCharacterPortrait = tool(
 
 export const captureNovelMemoryEvent = tool(
   async ({ title, content, sourceType, sourceId, characterId, volumeId, chapterId }, config) => {
-    const slug = novelSlugOf(config); const database = databaseFor(config)
-    try {
-      return JSON.stringify(await createMemoryAutomation(database, createSiliconFlowEmbeddingClient()).capture({ novelId: slug, title, content, sourceType, sourceId, characterId, volumeId, chapterId }), null, 2)
-    } finally { database.close() }
+    JSON.stringify(
+      await memoryApi.captureNovelMemoryEvent(novelIdOf(config), { title, content, sourceType, sourceId, characterId, volumeId, chapterId }),
+      null,
+      2,
+    )
   },
   {
     name: "capture_novel_memory_event",

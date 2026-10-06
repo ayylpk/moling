@@ -1,10 +1,8 @@
 import { tool } from 'langchain'
 import * as z from 'zod'
 
-import { saveVolumeOutlineWithMemory } from '../../storage/novelEffects'
-import { createChapterRuntime } from '../chapterRuntime'
-import { createOutlineRuntime, type AnchorInput } from '../outlineRuntime'
-import { pack, withNovelDatabase } from './context'
+import { outline as outlineApi, type AnchorInput } from '../../my-app'
+import { novelIdOf, pack } from './context'
 
 /**
  * 大纲工具 —— 卷 + 卷纲 + 全篇锚点。
@@ -19,9 +17,10 @@ import { pack, withNovelDatabase } from './context'
  * 漂移是缺陷、要人看，不是让模型顺手改掉的东西。
  */
 export const saveVolumeOutline = tool(
-  async ({ volume, direction, structure, pacing, constraints }, config) =>
-    withNovelDatabase(config, (database, novel) => {
-      // 这一卷提交的锚点 —— 同时也是 outline_volumes 里要留的那份快照
+  async ({ volume, direction, structure, pacing, constraints }, config) => {
+    const novelId = novelIdOf(config)
+    {
+      // 这一卷提交的锚点 —— 保留这一层花括号，只是把它闭合对 —— 同时也是 outline_volumes 里要留的那份快照
       const anchorInput: AnchorInput = {
         logline: direction.logline,
         theme: direction.theme,
@@ -35,7 +34,7 @@ export const saveVolumeOutline = tool(
 
       // 卷 + 锚点 + 卷纲 + 记忆：绑定与顺序都在 novelEffects 里
       // （顺序有意义：先写锚点再写卷纲，第一卷的快照才和锚点一致、不误报漂移）
-      const { created, anchor, outline } = saveVolumeOutlineWithMemory(database, novel.id, {
+      const { created, anchor, outline } = outlineApi.saveVolumeOutline(novelId, {
         volume: {
           no: volume.no,
           name: volume.name,
@@ -63,7 +62,8 @@ export const saveVolumeOutline = tool(
         锚点: { written: anchor.written, drift: anchor.drift },
         卷纲漂移: outline.drift,
       })
-    }),
+    }
+  },
   {
     name: 'save_volume_outline',
     description:
@@ -102,58 +102,54 @@ export const saveVolumeOutline = tool(
 )
 
 export const readOutline = tool(
-  async ({ volume_id }, config) =>
-    withNovelDatabase(config, (database) => {
-      const chapters = createChapterRuntime(database)
-      const outlines = createOutlineRuntime(database)
-      const anchor = outlines.currentAnchor()
+  async ({ volume_id }, config) => {
+    const novelId = novelIdOf(config)
 
-      // 带 volume_id = 取这一卷卷纲全文（幕 / 转折点 / 节奏 / 约束），排这一卷时才需要
-      if (volume_id !== undefined) {
-        const outline = outlines.getVolumeOutline(volume_id)
-        if (!outline) throw new Error(`第 volume_id=${volume_id} 卷还没有卷纲`)
-        const volume = chapters.getVolume(volume_id)
-        return pack(`卷纲全文｜volume_id:${volume_id}`, {
-          volume: volume ? { no: volume.no, name: volume.name, chapters: `${volume.startChapter}-${volume.endChapter}` } : null,
-          structureType: outline.structureType,
-          acts: outline.acts,
-          turningPoints: outline.turningPoints,
-          pacing: outline.pacing,
-          constraints: outline.constraints,
-          drift: outline.drift,
-        })
-      }
-
-      const drifted = new Set(outlines.listDriftedVolumeIds())
-      const outlineByVolume = new Map(outlines.listVolumeOutlines().map((o) => [o.volumeId, o]))
-      const volumes = chapters.listVolumes()
-
-      // 只回结构与状态，不回每卷的幕/转折点全文（那是排这一卷时才需要的资料）
-      return pack('大纲索引与漂移检查', {
-        锚点: anchor
-          ? {
-              logline: anchor.logline,
-              theme: anchor.theme,
-              coreConflict: anchor.coreConflict,
-              endingDirection: anchor.endingDirection,
-              structureType: anchor.structureType,
-              lockedByVolume: anchor.lockedByVolume,
-              有主线: anchor.mainPlot !== null && anchor.mainPlot !== undefined,
-              支线数: Array.isArray(anchor.subplots) ? anchor.subplots.length : 0,
-            }
-          : null,
-        卷: volumes.map((v) => ({
-          no: v.no,
-          volumeId: v.id,
-          name: v.name,
-          chapters: `${v.startChapter}-${v.endChapter}`,
-          structureType: outlineByVolume.get(v.id)?.structureType ?? null,
-          hasOutline: outlineByVolume.has(v.id),
-          drift: drifted.has(v.id),
-        })),
-        漂移的卷: drifted.size === 0 ? [] : [...drifted],
+    // 带 volume_id = 取这一卷卷纲全文（幕 / 转折点 / 节奏 / 约束），排这一卷时才需要
+    if (volume_id !== undefined) {
+      const outline = outlineApi.getVolumeOutline(novelId, volume_id)
+      if (!outline) throw new Error(`第 volume_id=${volume_id} 卷还没有卷纲`)
+      return pack(`卷纲全文｜volume_id:${volume_id}`, {
+        structureType: outline.structureType,
+        acts: outline.acts,
+        turningPoints: outline.turningPoints,
+        pacing: outline.pacing,
+        constraints: outline.constraints,
+        drift: outline.drift,
       })
-    }),
+    }
+
+    const { anchor, volumeOutlines, driftedVolumeIds } = outlineApi.readOutline(novelId)
+    const volumes = outlineApi.listVolumes(novelId)
+    const drifted = new Set(driftedVolumeIds)
+    const outlineByVolume = new Map(volumeOutlines.map((o) => [o.volumeId, o]))
+
+    // 只回结构与状态，不回每卷的幕/转折点全文（那是排这一卷时才需要的资料）
+    return pack('大纲索引与漂移检查', {
+      锚点: anchor
+        ? {
+            logline: anchor.logline,
+            theme: anchor.theme,
+            coreConflict: anchor.coreConflict,
+            endingDirection: anchor.endingDirection,
+            structureType: anchor.structureType,
+            lockedByVolume: anchor.lockedByVolume,
+            有主线: anchor.mainPlot !== null && anchor.mainPlot !== undefined,
+            支线数: Array.isArray(anchor.subplots) ? anchor.subplots.length : 0,
+          }
+        : null,
+      卷: volumes.map((v) => ({
+        no: v.no,
+        volumeId: v.id,
+        name: v.name,
+        chapters: `${v.startChapter}-${v.endChapter}`,
+        structureType: outlineByVolume.get(v.id)?.structureType ?? null,
+        hasOutline: outlineByVolume.has(v.id),
+        drift: drifted.has(v.id),
+      })),
+      漂移的卷: drifted.size === 0 ? [] : [...drifted],
+    })
+  },
   {
     name: 'read_outline',
     description:

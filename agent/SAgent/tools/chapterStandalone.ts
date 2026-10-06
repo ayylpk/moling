@@ -2,16 +2,9 @@ import { tool } from 'langchain'
 import type { RunnableConfig } from '@langchain/core/runnables'
 import * as z from 'zod'
 import { createModel } from '../../create_model'
-import { rememberChapterText } from '../../storage/novelEffects'
-import { openCatalogDatabase, openNovelDatabase } from '../../storage/novelDatabase'
-import { createChapterRuntime } from '../chapterRuntime'
+import { chapter as chapterApi, character as characterApi, world as worldApi, type ChapterContext, type ChapterOutline } from '../../my-app'
 import { createChapterWorkflow, type ChapterDraft, type ChapterPolish } from '../chapterWorkflow'
-
-const novelIdOf = (config?: RunnableConfig): number => {
-  const id = (config?.configurable as Record<string, unknown> | undefined)?.novelId
-  if (typeof id !== 'number' || !Number.isInteger(id)) throw new Error('章节生成缺少 configurable.novelId')
-  return id
-}
+import { novelIdOf, novelOf } from './context'
 
 const modelText = (response: unknown): string => {
   if (typeof response === 'string') return response
@@ -26,7 +19,7 @@ const jsonResponse = (response: unknown): Record<string, unknown> => {
   return JSON.parse(text.slice(start, end + 1)) as Record<string, unknown>
 }
 
-const writerPrompt = (novel: { title: string; genre: string; style: string }, chapter: ReturnType<ReturnType<typeof createChapterRuntime>['getChapter']>, previous: string, decisions: string, context: string): string => `你是墨灵的执笔 Agent，只写一章中文小说正文。
+const writerPrompt = (novel: { title: string; genre: string; style: string }, chapter: ChapterOutline, previous: string, decisions: string, context: string): string => `你是墨灵的执笔 Agent，只写一章中文小说正文。
 输出严格 JSON：{"text":"正文纯文本","summary":"本章发生了什么","endsWith":"结尾状态"}，不要 Markdown，不要解释。
 小说：《${novel.title}》；题材：${novel.genre}；文风：${novel.style}
 世界与角色资料：${context}
@@ -63,7 +56,7 @@ const polisherPrompt = (novel: { title: string; style: string }, text: string, r
  * 所以 skill 里仍然要求中心 Agent 自己写 —— 两层都留着。
  */
 const resolvePrevious = (
-  runtime: ReturnType<typeof createChapterRuntime>,
+  runtime: Pick<ChapterContext, 'getText'>,
   chapterIdx: number,
   given?: string,
 ): string => {
@@ -79,68 +72,76 @@ const resolvePrevious = (
     .join('\n')
 }
 
-const novelContext = (database: ReturnType<typeof openNovelDatabase>): string => {
-  const world = database.query('SELECT name, premise, rules, terms, forbidden FROM worlds ORDER BY version DESC LIMIT 1').get()
-  const characters = database.query('SELECT id, name, role, voice, want, need FROM characters ORDER BY id').all()
+/** 喂给执笔模型的资料：世界观 + 角色卡。走门面取，不在这里开库 */
+const novelContext = (novelId: number): string => {
+  const world = worldApi.currentWorld(novelId)
+  const characters = characterApi
+    .listCharacters(novelId)
+    .map((c) => ({ id: c.id, name: c.name, role: c.role, voice: c.voice, want: c.want, need: c.need }))
   return JSON.stringify({ world, characters })
 }
 
 export const generateChapterTool = tool(
   async ({ chapterIdx, previous, decisions }, config) => {
     const novelId = novelIdOf(config)
-    const catalog = openCatalogDatabase()
-    const novel = catalog.query('SELECT slug, title, genre, style FROM novels WHERE id = ?').get(novelId) as { slug: string; title: string; genre: string; style: string } | null
-    catalog.close()
-    if (!novel) throw new Error(`小说不存在：novelId=${novelId}`)
-    const database = openNovelDatabase(novel.slug)
-    const runtime = createChapterRuntime(database)
-    const chapter = runtime.getChapter(chapterIdx)
-    if (!chapter) { database.close(); throw new Error(`找不到第 ${chapterIdx} 章章纲`) }
-    const context = novelContext(database)
-    // 前情：调用方给了就用它；没给且不是第一章，就从库里取上一章的摘要与结尾状态。
-    // 不兜这个底，第 2 章会被当成开篇写 —— 它读不到第 1 章末尾的钩子，衔接就断了，
-    // 而且不会报错，只会写出一章自成体系却接不上的正文。
-    const previousText = resolvePrevious(runtime, chapterIdx, previous)
+    const novel = novelOf(config)
+    const context = novelContext(novelId)
     const writer = createModel(0.7, 300_000, false, 8192)
     const polisher = createModel(0.25, 180_000, false, 8192)
-    const workflow = createChapterWorkflow({
-      plan: async (input) => { runtime.planTask('chapter', String(input.chapterIdx), JSON.stringify({ chapter, previous: previousText, decisions })) },
-      claim: async (input) => {
-        const task = runtime.claimTask('chapter', String(input.chapterIdx), JSON.stringify({ chapter, previous: previousText, decisions }))
-        return { action: task.action, taskId: task.taskId }
-      },
-      write: async (): Promise<ChapterDraft> => {
-        const value = jsonResponse(await writer.invoke(writerPrompt(novel, chapter, previousText, decisions ?? '', context)))
-        if (typeof value.text !== 'string' || !value.text.trim()) throw new Error('执笔 Agent 返回空正文')
-        return { text: value.text, summary: typeof value.summary === 'string' ? value.summary : '', endsWith: typeof value.endsWith === 'string' ? value.endsWith : '' }
-      },
-      loadDraft: async () => {
-        const draft = runtime.getText(chapterIdx, 'draft')
-        if (!draft) throw new Error(`第 ${chapterIdx} 章没有可复用的初稿`)
-        return { text: draft.text, summary: draft.summary, endsWith: draft.endsWith }
-      },
-      polish: async (input): Promise<ChapterPolish> => {
-        const value = jsonResponse(await polisher.invoke(polisherPrompt(novel, input.draft.text, input.polishRetry === true)))
-        if (typeof value.text !== 'string' || !value.text.trim()) throw new Error('润色 Agent 返回空正文')
-        const changes = Array.isArray(value.changes) ? value.changes : []
-        // 空转条目不是改动：before 与 after 一样的那种从审计清单里去掉。
-        // 留着它们等于替模型把"我改了"这句话记进档案，而它其实一个字都没动。
-        const applied = changes.filter((c) => {
-          const item = (c ?? {}) as { before?: unknown; after?: unknown }
-          return String(item.before ?? '') !== String(item.after ?? '')
-        })
-        return { text: value.text, report: { changes: applied, droppedNoop: changes.length - applied.length } }
-      },
-      save: async (input) => {
-        runtime.saveText(input.chapterIdx, { stage: input.stage, text: input.text, summary: input.summary, endsWith: input.endsWith, polishReport: input.polishReport })
-        // 记忆格式与 HTTP 手写终稿共用一份（见 storage/novelEffects 的 rememberChapterText）。
-        // 只有 final 会真的记；draft 是过程稿。不 await —— 记忆挂了不该让这一章判失败。
-        rememberChapterText(novelId, { chapterId: chapter.id, chapterIdx: input.chapterIdx, stage: input.stage, text: input.text, summary: input.summary, endsWith: input.endsWith })
-      },
-      finish: async (input) => { runtime.finishTask(input.taskId) },
-      fail: async (input) => { if (input.taskId !== undefined) runtime.failTask(input.taskId, input.error) },
+
+    // 一次开库跑完整条链：plan → claim → 执笔 → draft → 润色 → final → 收尾。
+    // 中间夹着两次模型调用，逐步开库关库既慢，也让「这一章的多个步骤」没有同一个事务视角。
+    const result = await chapterApi.withChapterConnection(novelId, async (ctx) => {
+      const chapter = ctx.getChapter(chapterIdx)
+      if (!chapter) throw new Error(`找不到第 ${chapterIdx} 章章纲`)
+
+      // 前情：调用方给了就用它；没给且不是第一章，就从库里取上一章的摘要与结尾状态。
+      // 不兜这个底，第 2 章会被当成开篇写 —— 它读不到第 1 章末尾的钩子，衔接就断了，
+      // 而且不会报错，只会写出一章自成体系却接不上的正文。
+      const previousText = resolvePrevious(ctx, chapterIdx, previous)
+      // 指纹只跟"这一章的输入"走：输入没变才允许复用已存的初稿
+      const fingerprint = JSON.stringify({ chapter, previous: previousText, decisions })
+
+      const workflow = createChapterWorkflow({
+        plan: async (input) => { ctx.planTask('chapter', String(input.chapterIdx), fingerprint) },
+        claim: async (input) => {
+          const task = ctx.claimTask('chapter', String(input.chapterIdx), fingerprint)
+          return { action: task.action, taskId: task.taskId }
+        },
+        write: async (): Promise<ChapterDraft> => {
+          const value = jsonResponse(await writer.invoke(writerPrompt(novel, chapter, previousText, decisions ?? '', context)))
+          if (typeof value.text !== 'string' || !value.text.trim()) throw new Error('执笔 Agent 返回空正文')
+          return { text: value.text, summary: typeof value.summary === 'string' ? value.summary : '', endsWith: typeof value.endsWith === 'string' ? value.endsWith : '' }
+        },
+        loadDraft: async () => {
+          const draft = ctx.getText(chapterIdx, 'draft')
+          if (!draft) throw new Error(`第 ${chapterIdx} 章没有可复用的初稿`)
+          return { text: draft.text, summary: draft.summary, endsWith: draft.endsWith }
+        },
+        polish: async (input): Promise<ChapterPolish> => {
+          const value = jsonResponse(await polisher.invoke(polisherPrompt(novel, input.draft.text, input.polishRetry === true)))
+          if (typeof value.text !== 'string' || !value.text.trim()) throw new Error('润色 Agent 返回空正文')
+          const changes = Array.isArray(value.changes) ? value.changes : []
+          // 空转条目不是改动：before 与 after 一样的那种从审计清单里去掉。
+          // 留着它们等于替模型把「我改了」这句话记进档案，而它其实一个字都没动。
+          const applied = changes.filter((c) => {
+            const item = (c ?? {}) as { before?: unknown; after?: unknown }
+            return String(item.before ?? '') !== String(item.after ?? '')
+          })
+          return { text: value.text, report: { changes: applied, droppedNoop: changes.length - applied.length } }
+        },
+        // 终稿的记忆由 ctx.saveText 按 stage 决定要不要发（只有 final 记）
+        save: async (input) => {
+          ctx.saveText(input.chapterIdx, { stage: input.stage, text: input.text, summary: input.summary, endsWith: input.endsWith, polishReport: input.polishReport })
+        },
+        finish: async (input) => { ctx.finishTask(input.taskId) },
+        fail: async (input) => { if (input.taskId !== undefined) ctx.failTask(input.taskId, input.error) },
+      })
+
+      return workflow({ novelId, chapterIdx, previous, decisions })
     })
-    try { return JSON.stringify(await workflow({ novelId, chapterIdx, previous, decisions }), null, 2) } finally { database.close() }
+
+    return JSON.stringify(result, null, 2)
   },
   {
     name: 'generate_chapter',

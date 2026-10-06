@@ -1,9 +1,8 @@
 import { tool } from 'langchain'
 import * as z from 'zod'
 
-import { saveActorDecisionWithMemory } from '../../storage/novelEffects'
-import { createDecisionRuntime, type DecisionInput } from '../decisionRuntime'
-import { pack, withNovelDatabase } from './context'
+import { decision as decisionApi } from '../../my-app'
+import { novelIdOf, pack } from './context'
 
 /**
  * 角色裁决工具。
@@ -16,9 +15,8 @@ import { pack, withNovelDatabase } from './context'
  * 不新增记录、也不重新问 Actor。重跑一章是常事，这一步省下的是真调用。
  */
 export const saveActorDecision = tool(
-  async (input, config) =>
-    withNovelDatabase(config, (database, novel) => {
-      const saved = saveActorDecisionWithMemory(database, novel.id, {
+  async (input, config) => {
+    const saved = decisionApi.saveActorDecision(novelIdOf(config), {
         chapterIdx: input.chapter_idx,
         characterName: input.character_name,
         situation: input.situation,
@@ -28,15 +26,15 @@ export const saveActorDecision = tool(
         line: input.line,
         customAnswer: input.custom_answer,
         promptHash: input.prompt_hash,
-      } as DecisionInput)
-      return pack(saved.reused ? '裁决已存在，直接复用（没有新增记录）' : '裁决已落库', {
+    })
+    return pack(saved.reused ? '裁决已存在，直接复用（没有新增记录）' : '裁决已落库', {
         decision_id: saved.decision.id,
         chapter_idx: input.chapter_idx,
         character: saved.decision.characterName ?? '（未建卡的角色）',
         choice: saved.decision.choice,
         reused: saved.reused,
-      })
-    }),
+    })
+  },
   {
     name: 'save_actor_decision',
     description:
@@ -65,11 +63,10 @@ export const saveActorDecision = tool(
 )
 
 export const readActorDecisions = tool(
-  async ({ chapter_idx }, config) =>
-    withNovelDatabase(config, (database) => {
-      const block = createDecisionRuntime(database).buildDecisionsText(chapter_idx)
-      return pack(`第 ${chapter_idx} 章裁决（${block.count} 条）`, block.text)
-    }),
+  async ({ chapter_idx }, config) => {
+    const block = decisionApi.buildChapterDecisionsText(novelIdOf(config), chapter_idx)
+    return pack(`第 ${chapter_idx} 章裁决（${block.count} 条）`, block.text)
+  },
   {
     name: 'read_actor_decisions',
     description:

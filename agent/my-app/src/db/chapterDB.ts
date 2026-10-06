@@ -1,306 +1,577 @@
-/**
- * 章纲 + 出场角色 + 正文（chapters / chapter_cast / chapter_texts）的访问层。
- *
- * 三张表放一个文件，因为它们几乎总是一起读写：
- * 保存一卷大纲 = 写 chapters + 每章的 chapter_cast；写一章正文 = UPSERT chapter_texts。
- *
- * 最值得看的是 `selectPendingDemands`：它把「章纲里写了 NEW: 但还没兑现」
- * 的条目一条条列出来 —— 那就是中心 agent 的待办清单。
- */
-import { db } from './createDB'
-import type {
-  ChapterEntity,
-  ChapterCastEntity,
-  ChapterTextEntity,
-  ChapterBriefVO,
-  PendingDemandVO,
-  TextStage,
-} from '../../../db/types'
-
-/* ==================== 入参类型 ==================== */
-
-export type NewChapterRow = Omit<ChapterEntity, 'id' | 'created_at' | 'updated_at'>
-export type ChapterRowPatch = Partial<Omit<ChapterEntity, 'id' | 'novel_id' | 'created_at'>>
-
-export type NewCastRow = Pick<ChapterCastEntity, 'novel_id' | 'chapter_id' | 'raw'> &
-  Partial<Pick<ChapterCastEntity, 'character_id' | 'resolved_at'>>
-
-export type NewChapterTextRow = Pick<ChapterTextEntity, 'novel_id' | 'chapter_id' | 'stage' | 'text'> &
-  Partial<Pick<ChapterTextEntity, 'summary' | 'ends_with' | 'polish_report'>>
-
-/* ==================== 字段白名单 ==================== */
-const CHAPTER_TEXT_KEYS = [
-  'title',
-  'goal',
-  'conflict',
-  'hook',
-  'emotion',
-  'summary',
-  'place_raw',
-  'updated_at',
-] as const
-const CHAPTER_NUM_KEYS = ['idx', 'word_count_target'] as const
-
-const TEXT_TEXT_KEYS = ['text', 'summary', 'ends_with', 'updated_at'] as const
-const TEXT_JSON_KEYS = ['polish_report'] as const
-
-/* ==================== 预编译语句 ==================== */
-
-const stmtInsertChapter = db.query(`
-  INSERT INTO chapters
-    (novel_id, volume_id, idx, title, goal, conflict, hook, emotion, summary,
-     place_raw, place_id, word_count_target)
-  VALUES
-    ($novel_id, $volume_id, $idx, $title, $goal, $conflict, $hook, $emotion, $summary,
-     $place_raw, $place_id, $word_count_target)
-`)
-const stmtSelectChapter = db.query(`SELECT * FROM chapters WHERE id = ?`)
-const stmtSelectChapterByIdx = db.query(`SELECT * FROM chapters WHERE novel_id = ? AND idx = ?`)
-const stmtSelectChaptersByNovel = db.query(
-  `SELECT * FROM chapters WHERE novel_id = ? ORDER BY idx`,
-)
-const stmtSelectChaptersByVolume = db.query(
-  `SELECT * FROM chapters WHERE volume_id = ? ORDER BY idx`,
-)
-/**
- * 按「卷 + 章号」找一章。
- *
- * 保存大纲时用它，而不是按全局章号找：按 (novel, idx) 找的话，第二卷声明了
- * 第 3 章就会**把第一卷的第 3 章悄悄挪到自己名下** —— 那不叫报错，那叫把数据挪走了。
- * 按卷内找之后，跨卷撞号会走到 INSERT 并撞上 UNIQUE(novel_id, idx)，直接失败回滚。
- */
-const stmtSelectByVolumeIdx = db.query(
-  `SELECT * FROM chapters WHERE volume_id = ? AND idx = ?`,
-)
-const stmtDeleteChapter = db.query(`DELETE FROM chapters WHERE id = ?`)
-
-const stmtInsertCast = db.query(`
-  INSERT INTO chapter_cast (novel_id, chapter_id, raw, character_id, resolved_at)
-  VALUES ($novel_id, $chapter_id, $raw, $character_id, $resolved_at)
-`)
-const stmtCastByChapter = db.query(`SELECT * FROM chapter_cast WHERE chapter_id = ? ORDER BY id`)
-const stmtDeleteCastByChapter = db.query(`DELETE FROM chapter_cast WHERE chapter_id = ?`)
-
-const stmtUpsertText = db.query(`
-  INSERT INTO chapter_texts (novel_id, chapter_id, stage, text, summary, ends_with, polish_report)
-  VALUES ($novel_id, $chapter_id, $stage, $text, $summary, $ends_with, $polish_report)
-  ON CONFLICT(chapter_id, stage) DO UPDATE SET
-    text          = excluded.text,
-    summary       = excluded.summary,
-    ends_with     = excluded.ends_with,
-    polish_report = excluded.polish_report,
-    updated_at    = datetime('now', 'localtime')
-`)
-const stmtSelectText = db.query(`SELECT * FROM chapter_texts WHERE chapter_id = ? AND stage = ?`)
-const stmtSelectTextsByChapter = db.query(
-  `SELECT * FROM chapter_texts WHERE chapter_id = ? ORDER BY stage`,
-)
-const stmtDeleteTextsByChapter = db.query(`DELETE FROM chapter_texts WHERE chapter_id = ?`)
-
-/* ==================== 章纲 ==================== */
-
-export const insertChapter = (row: NewChapterRow): number =>
-  Number(
-    stmtInsertChapter.run({
-      $novel_id: row.novel_id,
-      $volume_id: row.volume_id,
-      $idx: row.idx,
-      $title: row.title,
-      $goal: row.goal,
-      $conflict: row.conflict,
-      $hook: row.hook,
-      $emotion: row.emotion,
-      $summary: row.summary,
-      $place_raw: row.place_raw,
-      $place_id: row.place_id,
-      $word_count_target: row.word_count_target,
-    }).lastInsertRowid,
-  )
-
-export const selectChapter = (id: number): ChapterEntity | null =>
-  stmtSelectChapter.get(id) as ChapterEntity | null
-
-export const selectChapterByIdx = (novelId: number, idx: number): ChapterEntity | null =>
-  stmtSelectChapterByIdx.get(novelId, idx) as ChapterEntity | null
-
-export const selectChaptersByNovel = (novelId: number): ChapterEntity[] =>
-  stmtSelectChaptersByNovel.all(novelId) as ChapterEntity[]
-
-export const selectChaptersByVolume = (volumeId: number): ChapterEntity[] =>
-  stmtSelectChaptersByVolume.all(volumeId) as ChapterEntity[]
-
-/** 卷内按章号找。保存大纲的 UPSERT 用这个 —— 见 stmtSelectByVolumeIdx 的说明 */
-export const selectChapterByVolumeIdx = (
-  volumeId: number,
-  idx: number,
-): ChapterEntity | null => stmtSelectByVolumeIdx.get(volumeId, idx) as ChapterEntity | null
-
-/** 该小说最大章号，一章都没有时返回 0。下一卷的起始章号靠它算 */
-export const selectMaxChapterIdx = (novelId: number): number =>
-  (db.query(`SELECT coalesce(max(idx), 0) AS v FROM chapters WHERE novel_id = ?`).get(novelId) as {
-    v: number
-  }).v
+import type { Database } from 'bun:sqlite'
 
 /**
- * 精简列表：章号 / 标题 / 正文到哪一步 / 字数。
+ * 章节 runtime —— per-novel 库的「卷 / 章纲 / 出场角色 / 正文 / 任务」写读入口。
  *
- * textStage 和 wordCount 都是现算的，表里没有这两列 ——
- * 存副本就会和事实不同步（正文被重跑覆盖之后，那个副本就骗人了）。
- * wordCount 用 length(text)：SQLite 对 UTF-8 按字符数算，正好是中文的"字数"。
+ * ── 为什么这五样放一个文件 ──
+ * 它们几乎总是一起读写：存一卷大纲 = 写 volumes + 每章的 chapters + chapter_cast；
+ * 写一章正文 = UPSERT chapter_texts。拆开只会让调用方每次都拼三四个 runtime。
+ *
+ * ── 卷内章号，不是全局章号 ──
+ * 保存章纲时按 **(volume_id, idx)** 找已有行，不按 (idx) 找。
+ * 按全局章号找的话，第二卷声明"第 3 章"会**把第一卷的第 3 章悄悄挪到自己名下** ——
+ * 那不叫报错，那叫把数据挪走了。按卷内找之后，跨卷撞号会走到 INSERT 并撞上
+ * UNIQUE(idx)，直接失败（invalidate 而不是静默改），这才是我们要的。
+ *
+ * ── raw + 可空 id（和 locations.parent 同一套形态）──
+ * chapter_cast.raw 存章纲里原样写的名字，character_id 是解析结果。
+ * 解析不到 = 那个人还没建卡，是**待办状态**，靠 resolveCast 回头补。
+ * **`NEW:` 前缀永不解析**：它描述需求（"一个能撞见仇人的角色"），不是名字，
+ * 拿去查表可能撞到一个碰巧同名的角色。判定只在 isDemand 一处。
+ *
+ * ── chapter_texts / generation_tasks 维持原样 ──
+ * 一章两行（draft/final）封顶、UPSERT 覆盖不堆历史；任务按
+ * (stage, target_key) 去重、claim 的 skip/run 语义不变。这里不重写它们。
  */
-export const selectChapterBriefs = (
-  novelId: number,
-  filter: { volume_id?: number; from?: number; to?: number } = {},
-): ChapterBriefVO[] => {
-  const conds = ['c.novel_id = $novel_id']
-  const params: Record<string, string | number> = { $novel_id: novelId }
-  if (filter.volume_id !== undefined) {
-    conds.push('c.volume_id = $volume_id')
-    params.$volume_id = filter.volume_id
-  }
-  if (filter.from !== undefined) {
-    conds.push('c.idx >= $from')
-    params.$from = filter.from
-  }
-  if (filter.to !== undefined) {
-    conds.push('c.idx <= $to')
-    params.$to = filter.to
-  }
-  return db
-    .query(`
-      SELECT c.id, c.idx, c.title, c.volume_id,
-             coalesce(
-               (SELECT t.stage FROM chapter_texts t WHERE t.chapter_id = c.id AND t.stage = 'final'),
-               (SELECT t.stage FROM chapter_texts t WHERE t.chapter_id = c.id AND t.stage = 'draft'),
-               'none'
-             ) AS textStage,
-             coalesce(
-               (SELECT length(t.text) FROM chapter_texts t WHERE t.chapter_id = c.id
-                ORDER BY CASE t.stage WHEN 'final' THEN 0 ELSE 1 END LIMIT 1),
-               0
-             ) AS wordCount
-      FROM chapters c
-      WHERE ${conds.join(' AND ')}
-      ORDER BY c.idx
-    `)
-    .all(params) as ChapterBriefVO[]
+export type ChapterStage = 'world' | 'character' | 'location' | 'outline' | 'chapter' | 'polish'
+export type TextStage = 'draft' | 'final'
+
+export type VolumeInput = {
+  /** 第几卷，从 1 开始 */
+  no: number
+  name: string
+  goal?: string
+  fromState?: string
+  toState?: string
+  startChapter: number
+  endChapter: number
 }
 
-export const updateChapterRow = (id: number, patch: ChapterRowPatch): number => {
-  const sets: string[] = []
-  const params: Record<string, string | number | null> = { $id: id }
+export type Volume = {
+  id: number
+  no: number
+  name: string
+  goal: string
+  fromState: string
+  toState: string
+  startChapter: number
+  endChapter: number
+  createdAt: string
+  updatedAt: string
+}
 
-  for (const key of CHAPTER_TEXT_KEYS) {
-    const v = patch[key]
-    if (v !== undefined) {
-      sets.push(`${key} = $${key}`)
-      params[`$${key}`] = v
+/** 章纲入参，对着 Architect 的 ChapterOutline */
+export type ChapterOutlineInput = {
+  index: number
+  title: string
+  goal?: string
+  conflict?: string
+  hook?: string
+  emotion?: string
+  summary?: string
+  /** 本章地点：已有地名，或 `NEW:戏剧功能` */
+  place?: string
+  /** 出场角色：已有名字，或 `NEW:戏剧功能` */
+  characters?: string[]
+  wordCountTarget?: number
+}
+
+export type ChapterOutline = {
+  id: number
+  volumeId: number
+  idx: number
+  title: string
+  goal: string
+  conflict: string
+  hook: string
+  emotion: string
+  summary: string
+  placeRaw: string
+  placeId: number | null
+  wordCountTarget: number
+}
+
+/** 改一条章纲。按 id 改（前端 PUT /api/chapters/:id 用），不是按「卷内章号」 */
+export type ChapterOutlinePatch = {
+  title?: string
+  goal?: string
+  conflict?: string
+  hook?: string
+  emotion?: string
+  summary?: string
+  /** 改地点：写已有地名或 `NEW:戏剧功能`；会顺带重解析 place_id */
+  place?: string
+  wordCountTarget?: number
+}
+
+export type ChapterCast = {
+  id: number
+  chapterId: number
+  raw: string
+  characterId: number | null
+  resolvedAt: string | null
+  createdAt: string
+}
+
+/** 章纲里声明了 `NEW:` 但还没兑现的东西 —— 中心 agent 的待办清单 */
+export type PendingDemand = {
+  kind: 'character' | 'location'
+  chapterIdx: number
+  raw: string
+  /** `NEW:` 后面那段话，正好是 Character / Location agent 的 need */
+  need: string
+}
+
+export type ChapterText = {
+  id: number
+  chapterId: number
+  stage: TextStage
+  text: string
+  summary: string
+  endsWith: string
+  polishReport: unknown
+}
+export type GenerationTask = {
+  id: number
+  stage: ChapterStage
+  targetKey: string
+  status: 'pending' | 'running' | 'done' | 'failed' | 'stale'
+  attempt: number
+  inputHash: string
+  error: string
+}
+
+type TaskRow = {
+  id: number
+  stage: ChapterStage
+  target_key: string
+  status: GenerationTask['status']
+  attempt: number
+  input_hash: string
+  error: string
+}
+
+/* ==================== NEW: 约定（判定只此一处） ==================== */
+
+const NEW_PREFIX = 'NEW:'
+
+/** 是不是一个未兑现的需求。大小写不敏感，容忍前后空格 */
+export const isDemand = (raw: string): boolean => raw.trim().toUpperCase().startsWith(NEW_PREFIX)
+
+/** 取出 `NEW:` 后面那段话（下游 agent 的 need）。不是需求则返回空串 */
+export const demandNeed = (raw: string): string =>
+  isDemand(raw) ? raw.trim().slice(NEW_PREFIX.length).trim() : ''
+
+/** 规范化一个 raw 值：去首尾空白，NEW: 前缀统一成大写 */
+export const normalizeRaw = (raw: string): string => {
+  const t = raw.trim()
+  return isDemand(t) ? NEW_PREFIX + demandNeed(t) : t
+}
+
+export const createChapterRuntime = (database: Database) => {
+  const readTask = (id: number): GenerationTask | null => {
+    const row = database.query('SELECT id, stage, target_key, status, attempt, input_hash, error FROM generation_tasks WHERE id = ?').get(id) as TaskRow | null
+    return row ? toTask(row) : null
+  }
+
+  const readTaskByKey = (stage: ChapterStage, targetKey: string): GenerationTask | null => {
+    const row = database.query('SELECT id, stage, target_key, status, attempt, input_hash, error FROM generation_tasks WHERE stage = ? AND target_key = ?').get(stage, targetKey) as TaskRow | null
+    return row ? toTask(row) : null
+  }
+
+  const readChapterRow = (idx: number): Record<string, unknown> | null =>
+    (database.query('SELECT * FROM chapters WHERE idx = ?').get(idx) as Record<string, unknown> | null)
+
+  /** 按主键取行。HTTP 的 /api/chapters/:id 走的是 id，不是章号 */
+  const readChapterRowById = (id: number): Record<string, unknown> | null =>
+    (database.query('SELECT * FROM chapters WHERE id = ?').get(id) as Record<string, unknown> | null)
+
+  const readChapterById = (id: number): ChapterOutline | null => {
+    const row = readChapterRowById(id)
+    return row ? toChapter(row) : null
+  }
+
+  /** 章级：名字 → id，精确相等。`NEW:` 不问、也不存在 */
+  const characterIdByName = (name: string): number | null => {
+    if (!name || isDemand(name)) return null
+    const row = database.query('SELECT id FROM characters WHERE name = ?').get(name.trim()) as { id: number } | null
+    return row ? Number(row.id) : null
+  }
+
+  /** 地点名 → id，精确相等。`NEW:` 不问 */
+  const locationIdByName = (name: string): number | null => {
+    if (!name || isDemand(name)) return null
+    const row = database.query('SELECT id FROM locations WHERE name = ?').get(name.trim()) as { id: number } | null
+    return row ? Number(row.id) : null
+  }
+
+  const readVolumeRow = (id: number): Record<string, unknown> | null =>
+    (database.query('SELECT * FROM volumes WHERE id = ?').get(id) as Record<string, unknown> | null)
+
+  /* ---- 写：卷 ---- */
+
+  /**
+   * 建 / 改一卷。按卷号 UPSERT —— 同一卷重跑是安全的，不会堆出两条第 1 卷。
+   * （卷表没有 status 列：这一卷到哪一步，看 outline_volumes 在不在、正文有没有 final。）
+   */
+  const createVolume = (input: VolumeInput): { volume: Volume; created: boolean } => {
+    assertVolume(input)
+    const existing = database.query('SELECT id FROM volumes WHERE no = ?').get(input.no) as { id: number } | null
+    if (existing) {
+      database
+        .query(
+          `UPDATE volumes SET name = ?, goal = ?, from_state = ?, to_state = ?, start_chapter = ?, end_chapter = ?,
+             updated_at = datetime('now','localtime') WHERE id = ?`,
+        )
+        .run(input.name.trim(), input.goal ?? '', input.fromState ?? '', input.toState ?? '', input.startChapter, input.endChapter, existing.id)
+      return { volume: toVolume(readVolumeRow(existing.id)!), created: false }
     }
+    const result = database
+      .query(`INSERT INTO volumes (no, name, goal, from_state, to_state, start_chapter, end_chapter) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run(input.no, input.name.trim(), input.goal ?? '', input.fromState ?? '', input.toState ?? '', input.startChapter, input.endChapter)
+    return { volume: toVolume(readVolumeRow(Number(result.lastInsertRowid))!), created: true }
   }
-  for (const key of CHAPTER_NUM_KEYS) {
-    const v = patch[key]
-    if (v !== undefined) {
-      sets.push(`${key} = $${key}`)
-      params[`$${key}`] = v
+
+  /* ---- 写：章纲 + 出场角色（一个事务） ---- */
+
+  /**
+   * 存一章章纲，并顺带重建这一章的出场名单（chapter_cast）。
+   *
+   * 用事务包住是因为两张表要么一起成、要么一起不成 —— 章纲落库了但名单没落，
+   * 下游会以为"这章没有角色"，那是查不出来的错。
+   */
+  const saveChapterOutline = (volumeId: number, input: ChapterOutlineInput): { chapter: ChapterOutline; created: boolean; cast: ChapterCast[] } => {
+    if (!Number.isInteger(volumeId)) throw new TypeError('volumeId 必须是整数')
+    assertChapter(input)
+    if (!readVolumeRow(volumeId)) throw new TypeError(`volume_id=${volumeId} 不存在，先建卷`)
+
+    return database.transaction(() => {
+      const placeRaw = (input.place ?? '').trim()
+      const placeId = locationIdByName(placeRaw)
+      const target = input.wordCountTarget ?? 3000
+      const existing = database.query('SELECT id FROM chapters WHERE volume_id = ? AND idx = ?').get(volumeId, input.index) as { id: number } | null
+
+      let chapterId: number
+      let created: boolean
+      if (existing) {
+        database
+          .query(
+            `UPDATE chapters SET title = ?, goal = ?, conflict = ?, hook = ?, emotion = ?, summary = ?,
+               place_raw = ?, place_id = ?, word_count_target = ?, updated_at = datetime('now','localtime')
+             WHERE id = ?`,
+          )
+          .run(
+            input.title.trim(),
+            input.goal ?? '',
+            input.conflict ?? '',
+            input.hook ?? '',
+            input.emotion ?? '',
+            input.summary ?? '',
+            placeRaw,
+            placeId,
+            target,
+            existing.id,
+          )
+        chapterId = existing.id
+        created = false
+      } else {
+        try {
+          const result = database
+            .query(
+              `INSERT INTO chapters (volume_id, idx, title, goal, conflict, hook, emotion, summary, place_raw, place_id, word_count_target)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            )
+            .run(
+              volumeId,
+              input.index,
+              input.title.trim(),
+              input.goal ?? '',
+              input.conflict ?? '',
+              input.hook ?? '',
+              input.emotion ?? '',
+              input.summary ?? '',
+              placeRaw,
+              placeId,
+              target,
+            )
+          chapterId = Number(result.lastInsertRowid)
+        } catch (error) {
+          // 跨卷撞号：idx 是全篇唯一的。把 SQLite 的报错翻译成人话
+          throw new TypeError(
+            `第 ${input.index} 章已属于别的卷（章号全篇连续、不从 1 重开）。` +
+              `原始错误：${error instanceof Error ? error.message : String(error)}`,
+          )
+        }
+        created = true
+      }
+
+      const cast = writeCast(chapterId, input.characters ?? [])
+      return { chapter: toChapter(readChapterRow(input.index)!), created, cast }
+    })()
+  }
+
+  /** 重建一章的出场名单：先清后插。raw 去重，NEW: 统一成大写前缀 */
+  const writeCast = (chapterId: number, raws: string[]): ChapterCast[] => {
+    database.query('DELETE FROM chapter_cast WHERE chapter_id = ?').run(chapterId)
+    const seen = new Set<string>()
+    for (const raw of raws) {
+      const normalized = normalizeRaw(String(raw ?? ''))
+      if (!normalized || seen.has(normalized)) continue
+      seen.add(normalized)
+      database
+        .query(`INSERT INTO chapter_cast (chapter_id, raw, character_id) VALUES (?, ?, ?)`)
+        .run(chapterId, normalized, characterIdByName(normalized))
     }
-  }
-  // place_id 允许显式清空（改了 place_raw 之后重新解析）
-  if ('place_id' in patch) {
-    sets.push(`place_id = $place_id`)
-    params.$place_id = patch.place_id ?? null
+    return getCastByChapterId(chapterId)
   }
 
-  if (sets.length === 0) return 0
-  return db.query(`UPDATE chapters SET ${sets.join(', ')} WHERE id = $id`).run(params).changes
+  const getCastByChapterId = (chapterId: number): ChapterCast[] =>
+    (database.query('SELECT * FROM chapter_cast WHERE chapter_id = ? ORDER BY id').all(chapterId) as Array<Record<string, unknown>>).map(toCast)
+
+  const readChapterRowBy = (idx: number): Record<string, unknown> | null => readChapterRow(idx)
+
+  return {
+    /* ==================== 卷 ==================== */
+    createVolume,
+    getVolume(id: number): Volume | null {
+      const row = readVolumeRow(id)
+      return row ? toVolume(row) : null
+    },
+    getVolumeByNo(no: number): Volume | null {
+      const row = database.query('SELECT * FROM volumes WHERE no = ?').get(no) as Record<string, unknown> | null
+      return row ? toVolume(row) : null
+    },
+    listVolumes(): Volume[] {
+      return (database.query('SELECT * FROM volumes ORDER BY no').all() as Array<Record<string, unknown>>).map(toVolume)
+    },
+    /** 已有最大卷号，一卷都没有时返回 0 —— 下一卷的编号靠它算 */
+    maxVolumeNo(): number {
+      return Number((database.query('SELECT coalesce(max(no), 0) AS v FROM volumes').get() as { v: number }).v)
+    },
+
+    /* ==================== 章 ==================== */
+    saveChapterOutline,
+    getChapter(idx: number): ChapterOutline | null {
+      const row = readChapterRow(idx)
+      return row ? toChapter(row) : null
+    },
+    /** 按主键取一章。HTTP 的 PUT /api/chapters/:id 拿的是 id，不是章号 */
+    getChapterById: readChapterById,
+    /**
+     * 改一章。**按 id 改**，只动传进来的那几个字段（不像 saveChapterOutline 那样整条覆盖）——
+     * 前端在章纲页改一个标题，不该把 place_raw 和字数目标一起抹掉。
+     */
+    updateChapter(id: number, patch: ChapterOutlinePatch): ChapterOutline | null {
+      if (!readChapterById(id)) return null
+      const sets: string[] = []
+      const params: Array<string | number | null> = []
+
+      if (patch.title !== undefined) {
+        if (!patch.title.trim()) throw new TypeError('title 不能为空')
+        sets.push('title = ?')
+        params.push(patch.title.trim())
+      }
+      for (const [field, column] of [
+        ['goal', 'goal'],
+        ['conflict', 'conflict'],
+        ['hook', 'hook'],
+        ['emotion', 'emotion'],
+        ['summary', 'summary'],
+      ] as const) {
+        const value = patch[field]
+        if (value === undefined) continue
+        sets.push(`${column} = ?`)
+        params.push(value)
+      }
+      if (patch.place !== undefined) {
+        const placeRaw = patch.place.trim()
+        sets.push('place_raw = ?', 'place_id = ?')
+        params.push(placeRaw, locationIdByName(placeRaw))
+      }
+      if (patch.wordCountTarget !== undefined) {
+        if (!Number.isInteger(patch.wordCountTarget) || patch.wordCountTarget < 1) throw new TypeError('wordCountTarget 必须是正整数')
+        sets.push('word_count_target = ?')
+        params.push(patch.wordCountTarget)
+      }
+
+      if (sets.length === 0) return readChapterById(id)
+      database
+        .query(`UPDATE chapters SET ${sets.join(', ')}, updated_at = datetime('now','localtime') WHERE id = ?`)
+        .run(...params, id)
+      return readChapterById(id)
+    },
+    listChapters(volumeId?: number): ChapterOutline[] {
+      const rows = volumeId === undefined
+        ? (database.query('SELECT * FROM chapters ORDER BY idx').all() as Array<Record<string, unknown>>)
+        : (database.query('SELECT * FROM chapters WHERE volume_id = ? ORDER BY idx').all(volumeId) as Array<Record<string, unknown>>)
+      return rows.map(toChapter)
+    },
+    /** 最大章号，一章都没有时返回 0。下一卷的起始章号靠它算 */
+    maxChapterIdx(): number {
+      return Number((database.query('SELECT coalesce(max(idx), 0) AS v FROM chapters').get() as { v: number }).v)
+    },
+
+    /**
+     * 章节索引 —— 章纲字段 + 正文到哪一步。
+     *
+     * textStage 现算，不存副本：存一份就会和 chapter_texts 不同步，
+     * 而不同步的方向永远是"副本说已定稿、正文其实还在改"。
+     * 判定顺序 final → draft → none，也就是"能给作者看的那一版"。
+     */
+    listChapterSummaries(): Array<ChapterOutline & { textStage: TextStage | 'none' }> {
+      const rows = database
+        .query(
+          `SELECT c.*,
+                  coalesce(
+                    (SELECT t.stage FROM chapter_texts t WHERE t.chapter_id = c.id AND t.stage = 'final'),
+                    (SELECT t.stage FROM chapter_texts t WHERE t.chapter_id = c.id AND t.stage = 'draft'),
+                    'none'
+                  ) AS textStage
+           FROM chapters c ORDER BY c.idx`,
+        )
+        .all() as Array<Record<string, unknown>>
+      return rows.map((row) => ({ ...toChapter(row), textStage: row.textStage as TextStage | 'none' }))
+    },
+
+    /* ==================== 出场角色 ==================== */
+    /** 重建一章的名单（按章号找章） */
+    saveCast(chapterIdx: number, raws: string[]): ChapterCast[] {
+      const row = readChapterRow(chapterIdx)
+      if (!row) throw new Error(`找不到第 ${chapterIdx} 章，先落库章纲`)
+      return database.transaction(() => writeCast(Number(row.id), raws))()
+    },
+    getCast(chapterIdx: number): ChapterCast[] {
+      const row = readChapterRowBy(chapterIdx)
+      return row ? getCastByChapterId(Number(row.id)) : []
+    },
+    /**
+     * 角色建好之后，回头把这个名字下所有未解析的出场记录补上。返回补了几条。
+     * 场景：章纲先写了"林晚"但卡还没建，后来建好了。
+     */
+    resolveCast(raw: string, characterId: number): number {
+      const normalized = normalizeRaw(raw)
+      if (isDemand(normalized)) return 0
+      const row = database.query('SELECT id FROM characters WHERE id = ?').get(characterId) as { id: number } | null
+      if (!row) throw new TypeError(`character_id=${characterId} 不存在`)
+      return database
+        .query(`UPDATE chapter_cast SET character_id = ?, resolved_at = datetime('now','localtime') WHERE character_id IS NULL AND raw = ?`)
+        .run(characterId, normalized).changes
+    },
+    /** 待办清单：章纲里写了 `NEW:` 但还没兑现的角色与地点 */
+    pendingDemands(): PendingDemand[] {
+      const rows = database
+        .query(
+          `SELECT 'character' AS kind, c.idx AS chapter_idx, cs.raw AS raw
+             FROM chapter_cast cs JOIN chapters c ON c.id = cs.chapter_id
+            WHERE cs.character_id IS NULL AND upper(cs.raw) LIKE 'NEW:%'
+            UNION ALL
+           SELECT 'location' AS kind, c.idx AS chapter_idx, c.place_raw AS raw
+             FROM chapters c
+            WHERE c.place_id IS NULL AND upper(c.place_raw) LIKE 'NEW:%'
+            ORDER BY chapter_idx, kind`,
+        )
+        .all() as Array<{ kind: 'character' | 'location'; chapter_idx: number; raw: string }>
+      return rows.map((row) => ({ kind: row.kind, chapterIdx: Number(row.chapter_idx), raw: String(row.raw), need: demandNeed(String(row.raw)) }))
+    },
+
+    /* ==================== 正文（逻辑不变） ==================== */
+    getText(chapterIdx: number, stage: TextStage): ChapterText | null {
+      const chapter = this.getChapter(chapterIdx)
+      if (!chapter) return null
+      return this.getTextById(chapter.id, stage)
+    },
+    /** 按主键取正文。HTTP 拿的是 chapterId，不是章号 */
+    getTextById(chapterId: number, stage: TextStage): ChapterText | null {
+      const row = database.query('SELECT id, chapter_id, stage, text, summary, ends_with, polish_report FROM chapter_texts WHERE chapter_id = ? AND stage = ?').get(chapterId, stage) as Record<string, unknown> | null
+      return row ? {
+        id: Number(row.id), chapterId: Number(row.chapter_id), stage: row.stage as TextStage, text: String(row.text), summary: String(row.summary), endsWith: String(row.ends_with), polishReport: JSON.parse(String(row.polish_report || '[]')),
+      } : null
+    },
+    saveText(chapterIdx: number, input: { stage: TextStage; text: string; summary?: string; endsWith?: string; polishReport?: unknown }): ChapterText {
+      const chapter = this.getChapter(chapterIdx)
+      if (!chapter) throw new Error(`找不到第 ${chapterIdx} 章`)
+      return this.saveTextById(chapter.id, input)
+    },
+    saveTextById(chapterId: number, input: { stage: TextStage; text: string; summary?: string; endsWith?: string; polishReport?: unknown }): ChapterText {
+      database.query(`INSERT INTO chapter_texts (chapter_id, stage, text, summary, ends_with, polish_report) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(chapter_id, stage) DO UPDATE SET text=excluded.text, summary=excluded.summary, ends_with=excluded.ends_with, polish_report=excluded.polish_report, updated_at=datetime('now','localtime')`).run(chapterId, input.stage, input.text, input.summary ?? '', input.endsWith ?? '', JSON.stringify(input.polishReport ?? []))
+      return this.getTextById(chapterId, input.stage)!
+    },
+
+    /* ==================== 任务（逻辑不变） ==================== */
+    planTask(stage: ChapterStage, targetKey: string, inputHash = ''): GenerationTask {
+      const existing = readTaskByKey(stage, targetKey)
+      if (!existing) {
+        const result = database.query('INSERT INTO generation_tasks (stage, target_key, input_hash) VALUES (?, ?, ?)').run(stage, targetKey, inputHash)
+        return readTask(Number(result.lastInsertRowid))!
+      }
+      if (inputHash && inputHash !== existing.inputHash) {
+        database.query("UPDATE generation_tasks SET input_hash = ?, status = 'pending', error = '', updated_at = datetime('now','localtime') WHERE id = ?").run(inputHash, existing.id)
+      }
+      return readTask(existing.id)!
+    },
+    claimTask(stage: ChapterStage, targetKey: string, inputHash = ''): { action: 'run' | 'skip'; taskId: number; task: GenerationTask } {
+      const task = this.planTask(stage, targetKey, inputHash)
+      if (task.status === 'done' && inputHash && task.inputHash === inputHash) return { action: 'skip', taskId: task.id, task }
+      database.query("UPDATE generation_tasks SET status = 'running', attempt = attempt + 1, started_at = datetime('now','localtime'), updated_at = datetime('now','localtime') WHERE id = ?").run(task.id)
+      const claimed = readTask(task.id)!
+      return { action: 'run', taskId: claimed.id, task: claimed }
+    },
+    finishTask(taskId: number, artifactPath = ''): GenerationTask {
+      database.query("UPDATE generation_tasks SET status = 'done', artifact_path = ?, finished_at = datetime('now','localtime'), error = '', updated_at = datetime('now','localtime') WHERE id = ?").run(artifactPath, taskId)
+      return readTask(taskId)!
+    },
+    failTask(taskId: number, error: string): GenerationTask {
+      database.query("UPDATE generation_tasks SET status = 'failed', error = ?, updated_at = datetime('now','localtime') WHERE id = ?").run(error.slice(0, 2000), taskId)
+      return readTask(taskId)!
+    },
+    getTask: readTask,
+  }
 }
 
-export const deleteChapter = (id: number): number => stmtDeleteChapter.run(id).changes
+/* ==================== 校验 ==================== */
 
-/* ==================== 出场角色 ==================== */
-
-export const insertCast = (row: NewCastRow): number =>
-  Number(
-    stmtInsertCast.run({
-      $novel_id: row.novel_id,
-      $chapter_id: row.chapter_id,
-      $raw: row.raw,
-      $character_id: row.character_id ?? null,
-      $resolved_at: row.resolved_at ?? null,
-    }).lastInsertRowid,
-  )
-
-export const selectCastByChapter = (chapterId: number): ChapterCastEntity[] =>
-  stmtCastByChapter.all(chapterId) as ChapterCastEntity[]
-
-export const deleteCastByChapter = (chapterId: number): number =>
-  stmtDeleteCastByChapter.run(chapterId).changes
-
-/** 角色建好之后，回头把同名未解析的出场记录补上。返回补了几条 */
-export const resolvePendingCast = (
-  novelId: number,
-  raw: string,
-  characterId: number,
-  now: string,
-): number =>
-  db
-    .query(`
-      UPDATE chapter_cast
-      SET character_id = $cid, resolved_at = $now
-      WHERE novel_id = $novel_id AND character_id IS NULL AND raw = $raw
-    `)
-    .run({ $cid: characterId, $now: now, $novel_id: novelId, $raw: raw }).changes
-
-/**
- * 待建清单：章纲里写了 `NEW:...` 但还没兑现的角色与地点。
- *
- * `need` 就是 NEW: 后面那段话 —— **正好是 Character / Location agent 的输入**。
- * 这张清单让"第 12 章需要一个能撞见仇人的地方"这种需求不会烂在 JSON 里。
- */
-export const selectPendingDemands = (novelId: number): PendingDemandVO[] =>
-  db
-    .query(`
-      SELECT 'character' AS kind, cs.chapter_id, c.idx AS chapter_idx,
-             cs.raw AS raw, substr(cs.raw, 5) AS need
-      FROM chapter_cast cs
-      JOIN chapters c ON c.id = cs.chapter_id
-      WHERE cs.novel_id = ? AND cs.character_id IS NULL AND upper(cs.raw) LIKE 'NEW:%'
-      UNION ALL
-      SELECT 'location', c.id, c.idx, c.place_raw, substr(c.place_raw, 5)
-      FROM chapters c
-      WHERE c.novel_id = ? AND c.place_id IS NULL AND upper(c.place_raw) LIKE 'NEW:%'
-      ORDER BY chapter_idx, kind
-    `)
-    .all(novelId, novelId) as PendingDemandVO[]
-
-/* ==================== 正文 ==================== */
-
-/**
- * 写正文。**UPSERT**：同 (chapter, stage) 只留一行，重跑就覆盖。
- *
- * 不堆历史版本是有意的：库里只回答"现在是什么"。
- * 要看"改之前是什么"去磁盘 runs 目录 —— 那也是 artifact_path 的用处。
- */
-export const upsertChapterText = (row: NewChapterTextRow): number => {
-  stmtUpsertText.run({
-    $novel_id: row.novel_id,
-    $chapter_id: row.chapter_id,
-    $stage: row.stage,
-    $text: row.text,
-    $summary: row.summary ?? '',
-    $ends_with: row.ends_with ?? '',
-    $polish_report: row.polish_report ?? '[]',
-  })
-  const saved = selectChapterText(row.chapter_id, row.stage)
-  return saved?.id ?? 0
+const assertVolume = (input: VolumeInput): void => {
+  if (!input || typeof input !== 'object') throw new TypeError('卷必须是对象')
+  if (!Number.isInteger(input.no) || input.no < 1) throw new TypeError('no 必须是从 1 开始的整数')
+  if (!input.name?.trim()) throw new TypeError('name 不能为空')
+  if (!Number.isInteger(input.startChapter) || !Number.isInteger(input.endChapter)) throw new TypeError('起止章号必须是整数')
+  if (input.endChapter < input.startChapter) throw new TypeError('endChapter 不能小于 startChapter')
 }
 
-export const selectChapterText = (
-  chapterId: number,
-  stage: TextStage,
-): ChapterTextEntity | null => stmtSelectText.get(chapterId, stage) as ChapterTextEntity | null
+const assertChapter = (input: ChapterOutlineInput): void => {
+  if (!input || typeof input !== 'object') throw new TypeError('章纲必须是对象')
+  if (!Number.isInteger(input.index) || input.index < 1) throw new TypeError('index 必须是正整数')
+  if (!input.title?.trim()) throw new TypeError('title 不能为空')
+  if (input.characters !== undefined && !Array.isArray(input.characters)) throw new TypeError('characters 必须是数组')
+}
 
-export const selectChapterTexts = (chapterId: number): ChapterTextEntity[] =>
-  stmtSelectTextsByChapter.all(chapterId) as ChapterTextEntity[]
+/* ==================== 行 → 领域对象 ==================== */
 
-export const deleteChapterTexts = (chapterId: number): number =>
-  stmtDeleteTextsByChapter.run(chapterId).changes
+const toTask = (row: TaskRow): GenerationTask => ({ id: Number(row.id), stage: row.stage, targetKey: String(row.target_key), status: row.status, attempt: Number(row.attempt), inputHash: String(row.input_hash), error: String(row.error) })
+
+const toVolume = (row: Record<string, unknown>): Volume => ({
+  id: Number(row.id),
+  no: Number(row.no),
+  name: String(row.name),
+  goal: String(row.goal),
+  fromState: String(row.from_state),
+  toState: String(row.to_state),
+  startChapter: Number(row.start_chapter),
+  endChapter: Number(row.end_chapter),
+  createdAt: String(row.created_at),
+  updatedAt: String(row.updated_at),
+})
+
+const toChapter = (row: Record<string, unknown>): ChapterOutline => ({
+  id: Number(row.id),
+  volumeId: Number(row.volume_id),
+  idx: Number(row.idx),
+  title: String(row.title),
+  goal: String(row.goal),
+  conflict: String(row.conflict),
+  hook: String(row.hook),
+  emotion: String(row.emotion),
+  summary: String(row.summary),
+  placeRaw: String(row.place_raw),
+  placeId: row.place_id === null || row.place_id === undefined ? null : Number(row.place_id),
+  wordCountTarget: Number(row.word_count_target),
+})
+
+const toCast = (row: Record<string, unknown>): ChapterCast => ({
+  id: Number(row.id),
+  chapterId: Number(row.chapter_id),
+  raw: String(row.raw),
+  characterId: row.character_id === null || row.character_id === undefined ? null : Number(row.character_id),
+  resolvedAt: row.resolved_at === null || row.resolved_at === undefined ? null : String(row.resolved_at),
+  createdAt: String(row.created_at),
+})

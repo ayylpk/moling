@@ -1,130 +1,202 @@
+import type { Database } from 'bun:sqlite'
+
 /**
- * 地点（locations）的数据库访问层。
+ * 地点卡 runtime —— per-novel 库的地点写入 / 读取入口。
  *
- * 这张表是自引用的：`parent_id → locations.id`。
- * 用处是「层级挂载」—— 世界观只铺粗骨架（青州），细粒度地点（旧观那口枯井）
- * 由剧情按需生长，但**必须挂得上去**，不能平铺成一堆同级的名字。
+ * ── 这张表为什么是自引用的 ──
+ * `parent_id → locations.id`。世界观只铺**粗骨架**（临江老街），细粒度地点
+ * （老粮站晒台）由剧情按需生长，但**必须挂得上去** —— 物理上挂在已有地点之下，
+ * 不能平铺成一堆同级名字。外键保证"子地点不可能挂在不存在的地点下"。
  *
- * 跟角色关系一样用「raw + 可空 id」：`parent_raw` 是世界观里写的名字，
- * `parent_id` 是查表解析的结果。解析不到就是 NULL —— 那说明父地点还没建，
- * 是一种待办状态，不是错误。
+ * ── 粗骨架是谁放进来的 ──
+ * `worldRuntime.create` 落世界观时，会把 places 逐条物化成这里的根节点。
+ * 这一步不能省：骨架不进表，parent 填了它的地点就没有 id 可指，而且会被
+ * `unresolvedParents()` **永久**报成待办（详见 worldRuntime 的 materializePlaces）。
+ *
+ * ── raw + 可空 id，是这一层的通用形态 ──
+ * `parent_raw` 是卡上原样写的上级地名，`parent_id` 是查表解析的结果。
+ * **解析不到不是错误，是待办状态**（父地点还没建），留 NULL，
+ * 等父地点建好之后用 resolvePendingChildren 回头补上。
+ *
+ * ── NEW: 前缀永不解析 ──
+ * `NEW:` 描述的是**需求**（"一个能撞见仇人的地方"），不是名字。
+ * 拿它去查表可能撞到一个碰巧同名的地点，所以判定为需求时直接不解析。
  */
-import { db } from './createDB'
-import type { LocationEntity } from '../../../db/types'
-
-/* ==================== 入参类型 ==================== */
-
-export type NewLocationRow = Omit<LocationEntity, 'id' | 'created_at' | 'updated_at'>
-export type LocationRowPatch = Partial<Omit<LocationEntity, 'id' | 'novel_id' | 'created_at'>>
-
-/* ==================== 字段白名单 ==================== */
-const TEXT_KEYS = ['name', 'parent_raw', 'signature', 'role', 'updated_at'] as const
-const JSON_KEYS = ['features'] as const
-
-/* ==================== 预编译语句 ==================== */
-
-const stmtInsert = db.query(`
-  INSERT INTO locations (novel_id, name, parent_raw, parent_id, signature, features, role)
-  VALUES ($novel_id, $name, $parent_raw, $parent_id, $signature, $features, $role)
-`)
-const stmtSelectById = db.query(`SELECT * FROM locations WHERE id = ?`)
-const stmtSelectByName = db.query(`SELECT * FROM locations WHERE novel_id = ? AND name = ?`)
-const stmtSelectByNovel = db.query(`SELECT * FROM locations WHERE novel_id = ? ORDER BY id`)
-const stmtDelete = db.query(`DELETE FROM locations WHERE id = ?`)
-
-/* ==================== 增 ==================== */
-
-export const insertLocation = (row: NewLocationRow): number =>
-  Number(
-    stmtInsert.run({
-      $novel_id: row.novel_id,
-      $name: row.name,
-      $parent_raw: row.parent_raw,
-      $parent_id: row.parent_id,
-      $signature: row.signature,
-      $features: row.features,
-      $role: row.role,
-    }).lastInsertRowid,
-  )
-
-/* ==================== 查 ==================== */
-
-export const selectLocation = (id: number): LocationEntity | null =>
-  stmtSelectById.get(id) as LocationEntity | null
-
-/** 按名字查 —— raw → id 解析用。精确相等 */
-export const selectLocationByName = (novelId: number, name: string): LocationEntity | null =>
-  stmtSelectByName.get(novelId, name) as LocationEntity | null
-
-export const selectLocationsByNovel = (novelId: number): LocationEntity[] =>
-  stmtSelectByNovel.all(novelId) as LocationEntity[]
-
-/** 有 parent_raw 但没解析出 parent_id 的 —— 父地点还没建的那些 */
-export const selectUnresolvedParents = (novelId: number): LocationEntity[] =>
-  db
-    .query(
-      `SELECT * FROM locations
-       WHERE novel_id = ? AND parent_id IS NULL AND parent_raw <> ''
-       ORDER BY id`,
-    )
-    .all(novelId) as LocationEntity[]
-
-/** 某个地点下的直接子地点。搭层级树用 */
-export const selectChildren = (parentId: number): LocationEntity[] =>
-  db.query(`SELECT * FROM locations WHERE parent_id = ? ORDER BY id`).all(parentId) as
-    LocationEntity[]
-
-/* ==================== 改 ==================== */
-
-export const updateLocationRow = (id: number, patch: LocationRowPatch): number => {
-  const sets: string[] = []
-  const params: Record<string, string | number | null> = { $id: id }
-
-  for (const key of TEXT_KEYS) {
-    const v = patch[key]
-    if (v !== undefined) {
-      sets.push(`${key} = $${key}`)
-      params[`$${key}`] = v
-    }
-  }
-  for (const key of JSON_KEYS) {
-    const v = patch[key]
-    if (v !== undefined) {
-      sets.push(`${key} = $${key}`)
-      params[`$${key}`] = v
-    }
-  }
-  // parent_id 允许显式写 null（把一个地点提成根），所以判据是 key 在不在补丁里
-  if ('parent_id' in patch) {
-    sets.push(`parent_id = $parent_id`)
-    params.$parent_id = patch.parent_id ?? null
-  }
-
-  if (sets.length === 0) return 0
-  return db.query(`UPDATE locations SET ${sets.join(', ')} WHERE id = $id`).run(params).changes
+export type LocationInput = {
+  name: string
+  /** 上级地名的名字（Location agent 的 parent 字段） */
+  parent?: string
+  /** 显式 raw，优先于 parent —— 需要保留原文时用 */
+  parentRaw?: string
+  /** 已经解析好的父 id。显式给了就不再按名字查 */
+  parentId?: number | null
+  signature?: string
+  features?: string[]
+  role?: string
 }
 
-/**
- * 把同一个名字下、还没解析的父子挂载关系补上。
- *
- * 场景：先建了「青州旧观的水井」（parent_raw = 青州），后来才建「青州」。
- * 建完青州之后回头补一遍。返回挂上了几个子地点。
- */
-export const resolvePendingChildren = (
-  novelId: number,
-  parentName: string,
-  parentId: number,
-  now: string,
-): number =>
-  db
-    .query(`
-      UPDATE locations
-      SET parent_id = $pid, updated_at = $now
-      WHERE novel_id = $novel_id AND parent_id IS NULL AND parent_raw = $name
-    `)
-    .run({ $pid: parentId, $now: now, $novel_id: novelId, $name: parentName }).changes
+export type LocationPatch = {
+  name?: string
+  parentRaw?: string
+  /** 允许显式写 null：把一个地点提成根节点 */
+  parentId?: number | null
+  signature?: string
+  features?: string[]
+  role?: string
+}
 
-/* ==================== 删 ==================== */
+export type Location = {
+  id: number
+  name: string
+  parentRaw: string
+  parentId: number | null
+  signature: string
+  features: string[]
+  role: string
+  createdAt: string
+  updatedAt: string
+}
 
-/** 返回受影响行数。子地点因为外键是 ON DELETE SET NULL，会变成根而不是跟着消失 */
-export const deleteLocation = (id: number): number => stmtDelete.run(id).changes
+export type LocationCreateResult = { location: Location; created: boolean }
+
+const NEW_PREFIX = 'NEW:'
+const isDemand = (raw: string): boolean => raw.trim().toUpperCase().startsWith(NEW_PREFIX)
+
+export const createLocationRuntime = (database: Database) => {
+  const read = (id: number): Location | null => {
+    const row = database.query('SELECT * FROM locations WHERE id = ?').get(id) as Record<string, unknown> | null
+    return row ? toLocation(row) : null
+  }
+
+  const readByName = (name: string): Location | null => {
+    const row = database.query('SELECT * FROM locations WHERE name = ?').get(name.trim()) as Record<string, unknown> | null
+    return row ? toLocation(row) : null
+  }
+
+  const create = (input: LocationInput): LocationCreateResult => {
+    assertInput(input)
+    const existing = readByName(input.name)
+    if (existing) return { location: existing, created: false }
+
+    const parentRaw = (input.parentRaw ?? input.parent ?? '').trim()
+    const parentId = resolveParentId(input, parentRaw)
+
+    const result = database
+      .query(`INSERT INTO locations (name, parent_raw, parent_id, signature, features, role) VALUES (?, ?, ?, ?, ?, ?)`)
+      .run(input.name.trim(), parentRaw, parentId, input.signature ?? '', JSON.stringify(input.features ?? []), input.role ?? '')
+    return { location: read(Number(result.lastInsertRowid))!, created: true }
+  }
+
+  /**
+   * 显式 parentId 优先；否则按 parent_raw **精确**查表（不做模糊匹配 ——
+   * 模糊匹配会把"青州"匹配到"青州旧址"，那是两个地方）。
+   * 需求（NEW:）不查表。
+   */
+  const resolveParentId = (input: LocationInput, parentRaw: string): number | null => {
+    if (input.parentId !== undefined) return input.parentId
+    if (!parentRaw || isDemand(parentRaw)) return null
+    return readByName(parentRaw)?.id ?? null
+  }
+
+  const update = (id: number, patch: LocationPatch): Location | null => {
+    const sets: string[] = []
+    const params: Array<string | number | null> = []
+
+    if (patch.name !== undefined) {
+      if (!patch.name.trim()) throw new TypeError('name 不能为空')
+      sets.push('name = ?')
+      params.push(patch.name.trim())
+    }
+    if (patch.parentRaw !== undefined) {
+      sets.push('parent_raw = ?')
+      params.push(patch.parentRaw.trim())
+    }
+    // parentId 的判据是「key 在不在补丁里」，而不是值真不真 —— 显式 null 是有意义的
+    if ('parentId' in patch) {
+      sets.push('parent_id = ?')
+      params.push(patch.parentId ?? null)
+    }
+    if (patch.signature !== undefined) {
+      sets.push('signature = ?')
+      params.push(patch.signature)
+    }
+    if (patch.features !== undefined) {
+      sets.push('features = ?')
+      params.push(JSON.stringify(patch.features))
+    }
+    if (patch.role !== undefined) {
+      sets.push('role = ?')
+      params.push(patch.role)
+    }
+
+    if (sets.length === 0) return read(id)
+    database
+      .query(`UPDATE locations SET ${sets.join(', ')}, updated_at = datetime('now','localtime') WHERE id = ?`)
+      .run(...params, id)
+    return read(id)
+  }
+
+  /**
+   * 父地点建好之后，回头把同一名字下未解析的挂载补上。返回挂上了几个子地点。
+   * 场景：先建「青州旧观的水井」（parent_raw = 青州），后来才建「青州」。
+   */
+  const resolvePendingChildren = (parentName: string, parentId: number): number => {
+    return database
+      .query(
+        `UPDATE locations SET parent_id = ?, updated_at = datetime('now','localtime')
+         WHERE parent_id IS NULL AND parent_raw = ?`,
+      )
+      .run(parentId, parentName.trim()).changes
+  }
+
+  return {
+    create,
+    get: read,
+    getByName: readByName,
+    list(): Location[] {
+      return (database.query('SELECT * FROM locations ORDER BY id').all() as Array<Record<string, unknown>>).map(toLocation)
+    },
+    /** 某个地点下的直接子地点。搭层级树用 */
+    children(parentId: number): Location[] {
+      return (database.query('SELECT * FROM locations WHERE parent_id = ? ORDER BY id').all(parentId) as Array<Record<string, unknown>>).map(toLocation)
+    },
+    /** 根节点（世界观粗骨架，没有上级的那些） */
+    roots(): Location[] {
+      return (database.query('SELECT * FROM locations WHERE parent_id IS NULL ORDER BY id').all() as Array<Record<string, unknown>>).map(toLocation)
+    },
+    /** 有 parent_raw 但还没解析出 parent_id 的 —— 待建清单的一半 */
+    unresolvedParents(): Location[] {
+      return (
+        database.query(`SELECT * FROM locations WHERE parent_id IS NULL AND parent_raw <> '' ORDER BY id`).all() as Array<Record<string, unknown>>
+      ).map(toLocation)
+    },
+    update,
+    resolvePendingChildren,
+  }
+}
+
+const assertInput = (input: LocationInput): void => {
+  if (!input || typeof input !== 'object') throw new TypeError('地点必须是对象')
+  if (!input.name?.trim()) throw new TypeError('name 不能为空')
+  if (input.features !== undefined && !Array.isArray(input.features)) throw new TypeError('features 必须是数组')
+}
+
+const parse = <T>(value: unknown, fallback: T): T => {
+  try {
+    return JSON.parse(String(value ?? '')) as T
+  } catch {
+    return fallback
+  }
+}
+
+const toLocation = (row: Record<string, unknown>): Location => ({
+  id: Number(row.id),
+  name: String(row.name),
+  parentRaw: String(row.parent_raw),
+  parentId: row.parent_id === null || row.parent_id === undefined ? null : Number(row.parent_id),
+  signature: String(row.signature),
+  features: parse<string[]>(row.features, []),
+  role: String(row.role),
+  createdAt: String(row.created_at),
+  updatedAt: String(row.updated_at),
+})

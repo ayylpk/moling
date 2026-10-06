@@ -3,8 +3,8 @@ import * as z from 'zod'
 
 import { createLocationAgent } from '../../Location/agent'
 import { buildLocationPrompt } from '../../Location/prompt'
-import { createLocationRuntime } from '../locationRuntime'
-import { pack, renderWorld, withNovelDatabase } from './context'
+import { location as locationApi } from '../../my-app'
+import { novelIdOf, pack, renderWorld } from './context'
 
 /**
  * 地点生成工具 —— 把 Location agent 接到中心 Agent 手上（从旧的 run_location_designer 迁来）。
@@ -22,13 +22,12 @@ import { pack, renderWorld, withNovelDatabase } from './context'
  */
 export const generateLocation = tool(
   async ({ need }, config) => {
-    const input = withNovelDatabase(config, (database) => {
-      const places = createLocationRuntime(database).list()
-      return {
-        world: renderWorld(database),
-        existing: places.length ? places.map((l) => `- ${l.name}（挂在：${l.parentRaw || '—'}）`).join('\n') : '（暂无）',
-      }
-    })
+    const novelId = novelIdOf(config)
+    const places = locationApi.listLocations(novelId)
+    const input = {
+      world: renderWorld(novelId),
+      existing: places.length ? places.map((l) => `- ${l.name}（挂在：${l.parentRaw || '—'}）`).join('\n') : '（暂无）',
+    }
 
     const agent = createLocationAgent()
     const res = await agent.invoke({

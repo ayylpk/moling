@@ -8,24 +8,9 @@ import { tool } from "langchain"
 import type { RunnableConfig } from "@langchain/core/runnables"
 import * as z from "zod"
 
-import { createSiliconFlowEmbeddingClient } from "../../storage/embedding"
-import { createMemoryStore, type MemoryLayer, type MemoryRecord } from "../../storage/memoryStore"
-import { openCatalogDatabase, openNovelDatabase } from "../../storage/novelDatabase"
-
-function novelIdOf(config?: RunnableConfig): number {
-  const id = (config?.configurable as Record<string, unknown> | undefined)?.novelId
-  if (typeof id !== "number" || !Number.isInteger(id)) throw new Error("缺少 novelId：调用 SAgent 时请在 config 里传 configurable.novelId。")
-  return id
-}
-
-function novelSlugOf(novelId: number): string {
-  const database = openCatalogDatabase()
-  try {
-    const novel = database.query("SELECT slug FROM novels WHERE id = ?").get(novelId) as { slug: string } | null
-    if (!novel) throw new Error(`小说不存在：novelId=${novelId}`)
-    return novel.slug
-  } finally { database.close() }
-}
+import { memory as memoryApi, type CatalogNovel } from "../../my-app"
+import { createSiliconFlowEmbeddingClient } from "../../my-app/src/shared/embedding"
+import { novelIdOf, novelOf } from "./context"
 
 const embeddingClient = createSiliconFlowEmbeddingClient()
 const embedOrUndefined = async (text: string): Promise<number[] | undefined> => {
@@ -37,14 +22,9 @@ const layerEnum = z.enum(["raw", "fact", "scene", "world", "character", "plot", 
 
 export const searchNovelMemory = tool(
   async ({ query, layer, volumeId, chapterId, limit }, config) => {
-    const slug = novelSlugOf(novelIdOf(config))
-    const database = openNovelDatabase(slug)
-    try {
-      const embedding = await embedOrUndefined(query)
-      const store = createMemoryStore(database)
-      const results = store.search({ novelId: slug, query, layer: layer as MemoryLayer | undefined, volumeId, chapterId, embedding, limit })
-      return JSON.stringify({ query, matchMode: embedding ? "hybrid" : "keyword", results: results.map(({ embedding: _embedding, ...result }) => result) }, null, 2)
-    } finally { database.close() }
+    const embedding = await embedOrUndefined(query)
+    const results = memoryApi.searchNovelMemory(novelIdOf(config), query, { layer, volumeId, chapterId, embedding, limit })
+    return JSON.stringify({ query, matchMode: embedding ? "hybrid" : "keyword", results }, null, 2)
   },
   {
     name: "search_novel_memory",
@@ -65,14 +45,10 @@ export const searchNovelMemory = tool(
 
 export const rememberNovelMemory = tool(
   async (input, config) => {
-    const slug = novelSlugOf(novelIdOf(config))
-    const database = openNovelDatabase(slug)
-    try {
-      const record: MemoryRecord = { ...input, novelId: slug, layer: input.layer as MemoryLayer }
-      const embedding = await embedOrUndefined(`${record.title}\n${record.content}`)
-      const id = createMemoryStore(database).upsert({ ...record, embedding })
-      return `【小说记忆已保存｜memory_id:${id}】\n${JSON.stringify({ title: record.title, layer: record.layer, sourceType: record.sourceType, sourceId: record.sourceId }, null, 2)}`
-    } finally { database.close() }
+    const novel = novelOf(config)
+    const embedding = await embedOrUndefined(`${input.title}\n${input.content}`)
+    const id = memoryApi.upsertNovelMemory(novel.id, { ...input, novelId: novel.slug })
+    return `【小说记忆已保存｜memory_id:${id}】\n${JSON.stringify({ title: input.title, layer: input.layer, sourceType: input.sourceType, sourceId: input.sourceId }, null, 2)}`
   },
   {
     name: "remember_novel_memory",

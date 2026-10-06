@@ -1,77 +1,25 @@
-/**
- * 角色裁决接口。
- *
- * 挂载点：app.route('/api/novels/:novelId/decisions', actorDecisionController)
- *
- * 裁决是按章组织的，所以查询都带 `?chapterId=N`。
- *
- *   POST /            记一次裁决（同一 prompt_hash 只问一次，重复提交会复用旧记录）
- *   GET  /?chapterId= 这一章的裁决列表
- *   GET  /text?chapterId=  拼好给 writer 的 {DECISIONS} 段
- *   DELETE /?chapterId=    清掉这一章的裁决
- */
-import { Hono } from 'hono'
-import * as service from '../service/actorDecisionService'
-import { parseId, novelIdOf, fail, readJson } from '../shared/http'
-import type { SaveActorDecisionDTO } from '../../../db/types'
-
-export const actorDecisionController = new Hono()
-
-/** 取 ?chapterId=，必填 */
-const chapterIdOf = (c: { req: { query: (k: string) => string | undefined } }): number | null =>
-  parseId(c.req.query('chapterId'))
+import { createDecisionRuntime, type DecisionInput } from '../db/actorDecisionDB'
+import { saveActorDecisionWithMemory } from '../service/entityService'
+import { withNovel } from './withNovel'
 
 /**
- * GET /api/novels/:novelId/decisions/text?chapterId=13
+ * 角色裁决 controller —— 一个动作一次调用。
  *
- * 返回拼好的纯文本，直接就是 writer 的 `{DECISIONS}` 输入 ——
- * 这一段是 Actor 和 writer 之间**唯一的接缝**。
+ * prompt_hash 相同就直接复用旧记录（reused=true），不重复问 Actor、不新增行。
+ * 复用时照样发记忆：记忆按 sourceId 去重，不会重复堆。
  */
-actorDecisionController.get('/text', (c) => {
-  const novelId = novelIdOf(c)
-  if (novelId === null) return c.json({ message: 'novelId 必须是整数' }, 400)
-  const chapterId = chapterIdOf(c)
-  if (chapterId === null) return c.json({ message: 'chapterId 必填且必须是整数' }, 400)
+export const saveActorDecision = (novelId: number, input: DecisionInput) =>
+  withNovel(novelId, (database) => saveActorDecisionWithMemory(database, novelId, input))
 
-  return c.json({ chapter_id: chapterId, text: service.buildDecisionsText(chapterId) })
-})
-
-/** GET /api/novels/:novelId/decisions?chapterId=13 */
-actorDecisionController.get('/', (c) => {
-  const novelId = novelIdOf(c)
-  if (novelId === null) return c.json({ message: 'novelId 必须是整数' }, 400)
-  const chapterId = chapterIdOf(c)
-  if (chapterId === null) return c.json({ message: 'chapterId 必填且必须是整数' }, 400)
-
-  return c.json(service.listDecisionsByChapter(chapterId))
-})
+/** 某一章的全部裁决 */
+export const listActorDecisions = (novelId: number, chapterIdx: number) =>
+  withNovel(novelId, (database) => createDecisionRuntime(database).list(chapterIdx))
 
 /**
- * POST /api/novels/:novelId/decisions
+ * 给执笔用的裁决文本。
  *
- * body 里的 `character` 写的是**名字**（不是 id）—— 那个角色可能还没建卡。
- * 返回的 `reused: true` 表示这次没有新增记录，直接复用了上次同一指纹的裁决。
+ * 以前这个拼装散在 writer 的调用处，现在收在这里：Actor 的答案经裁决表进正文，
+ * 这条缝只有一个出口，格式才不会在两个地方各写一遍。
  */
-actorDecisionController.post('/', async (c) => {
-  const novelId = novelIdOf(c)
-  if (novelId === null) return c.json({ message: 'novelId 必须是整数' }, 400)
-
-  const body = await readJson<SaveActorDecisionDTO>(c)
-  if (body === undefined) return c.json({ message: '请求体不是合法 JSON' }, 400)
-
-  try {
-    return c.json(service.recordDecision(novelId, body), 201)
-  } catch (e) {
-    return fail(c, e)
-  }
-})
-
-/** DELETE /api/novels/:novelId/decisions?chapterId=13 —— 重跑这一章前清干净 */
-actorDecisionController.delete('/', (c) => {
-  const novelId = novelIdOf(c)
-  if (novelId === null) return c.json({ message: 'novelId 必须是整数' }, 400)
-  const chapterId = chapterIdOf(c)
-  if (chapterId === null) return c.json({ message: 'chapterId 必填且必须是整数' }, 400)
-
-  return c.json({ deleted: service.deleteDecisionsByChapter(chapterId) })
-})
+export const buildChapterDecisionsText = (novelId: number, chapterIdx: number) =>
+  withNovel(novelId, (database) => createDecisionRuntime(database).buildDecisionsText(chapterIdx))
