@@ -10,8 +10,8 @@ import { flavorOf, novelIdOf, pack } from './context'
  * 角色裁决生成工具 —— 把 Actor agent 接到中心 Agent 手上（从旧的 run_character_actor 迁来）。
  *
  * ── 迁移改了什么 ──
- * 旧工具读角色卡走 `agent/my-app/src/service/characterService`（resources/myapp.sqlite，
- * 另一个库）。现在只读当前 per-novel 库的 `characters` 表，按名字取卡。
+ * 旧版本曾直接读取 `characterService`。现在通过 `agent/my-app` 门面只读当前 per-novel
+ * 库的 `characters` 表，按名字取卡。
  *
  * ── 它给模型的切片 = 「他此刻自己知道的」+「他自己的驱动力」 ──
  * 只注入 voice / want / cost / need / flaw / line / immutable。
@@ -23,7 +23,7 @@ import { flavorOf, novelIdOf, pack } from './context'
  *
  * ── relations 为空，是如实反映现状 ──
  * per-novel 的 characters 表**没有 relations 列**（角色关系表还没建，关系网工具也还没挂），
- * 所以这里只能给空数组。旧版能拿到 relations，是因为它读的是另一个库。
+ * 所以这里只能给空数组。关系表尚未纳入当前业务模型。
  * 这里不假装有——裁决仍然有效，只是"对在场者的既有态度"这一层要写进 situation。
  *
  * ── 它不落库 ──

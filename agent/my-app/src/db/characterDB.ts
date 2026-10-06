@@ -4,8 +4,8 @@ import type { Database } from 'bun:sqlite'
  * 角色卡 runtime —— per-novel 库的角色写入 / 读取入口。
  *
  * ── 为什么没有 novel_id ──
- * 旧的 characters 长在 resources/myapp.sqlite 的「单库多小说」模式里，每张卡带 novel_id。
- * per-novel 库是一本小说一个文件（resources/novels/<slug>/novel.sqlite），
+ * 历史版本的 characters 曾采用单库多小说模式并带 novel_id；当前正式模型是一本小说一个文件
+ *（resources/novels/<slug>/novel.sqlite），
  * **库本身就是边界**，所以这里的签名里没有 novel_id —— 传了反而说明调用方还没换脑。
  *
  * ── 与 character_portraits 的分工：固定 vs 动态，必须互补 ──

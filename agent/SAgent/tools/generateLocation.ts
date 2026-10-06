@@ -9,8 +9,8 @@ import { flavorOf, novelIdOf, pack, renderWorld } from './context'
 /**
  * 地点生成工具 —— 把 Location agent 接到中心 Agent 手上（从旧的 run_location_designer 迁来）。
  *
- * 数据源同角色生成：只读当前 per-novel 库（worldRuntime + locationRuntime），
- * 不再走 agent/my-app 的 service。
+ * 数据源同角色生成：通过 `agent/my-app` 门面只读当前 per-novel 库
+ * （worldRuntime + locationRuntime），不直接越级访问 service。
  *
  * ── 为什么要喂「已有地点」这一段 ──
  * 地点的 parent **只能从已有地名里选**（世界观只铺粗骨架，新地点挂在既有层级下）。

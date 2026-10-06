@@ -12,9 +12,8 @@
  * 库的分层（决定"这个数据从哪来"）：
  *   resources/catalog.sqlite               —— 目录级元数据（novels）
  *   resources/novels/<slug>/novel.sqlite   —— 一本小说的全部业务数据
- * 没有第二个后端了：旧的 `agent/my-app/src/index.ts`（Hono，同样监听 :3000）
- * 已不在运行配方里，其独占路由（worlds/search、generation/*、decisions）**不再提供**。
- * 任务队列（generation_tasks）与记忆链路都是内部实现，不对外开接口。
+ * HTTP 只有 storage server 一个入口；`agent/my-app/src/index.ts` 是它内部复用的业务门面，
+ * 不单独监听端口。任务队列（generation_tasks）与记忆链路都是内部实现，不对外开接口。
  *
  * ── 两条容易踩的约定 ──
  * ① **凡是只有 chapterId 的路由都必须带 novelId**（`?novelId=`）。

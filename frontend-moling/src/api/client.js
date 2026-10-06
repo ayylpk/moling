@@ -4,9 +4,8 @@
  * 基座：agent/storage/server.ts（根 package.json 的 `npm run api:dev` 起的就是它，:3000）。
  * 走 vite proxy（/api → :3000），所以这里一律相对路径，禁写死绝对地址（DESIGN.md 第七节）。
  *
- * 只有这一个后端。旧注释里提过的「第二个后端 agent/my-app/src/index.ts（Hono，同样 :3000，
- * 两者互斥）」已经不存在于运行路径上，它的 URL 形态（正文 PUT /api/novels/:id/chapters/:cid/texts）
- * 与当前基座不同，别照着它写请求。正式接口清单见 ./endpoints.js。
+ * HTTP 只有这一条运行入口。`agent/my-app/src/index.ts` 是 storage server 复用的业务门面，
+ * 不是第二个 HTTP 服务；页面不直接调用它。正式接口清单见 ./endpoints.js。
  */
 
 const request = async (url, options = {}) => {

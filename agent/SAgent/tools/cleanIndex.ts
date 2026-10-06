@@ -11,8 +11,8 @@
  * 「生成」与「落库」是两个动作，别把它们合成一个工具 —— 合成之后
  * "生成不满意"就只能靠重跑整条链来收拾，而生成是贵的那个。
  *
- * ── 已移出本目录的旧文件（10-05 隔离到 $TEMP，git 里随时可取回）──
- *   · tools/database.ts  —— 走 agent/my-app 的服务、写 resources/myapp.sqlite。已废弃。
+ * ── 不再使用的旧文件 ──
+ *   · tools/database.ts  —— 旧的直连工具，已由 my-app 门面替代，不得重新接入。
  *   · tools/subagents.ts —— 旧的七个子 agent 整体封装。五个已迁成
  *     generate_world / generate_character / generate_location / generate_outline /
  *     generate_decision；run_chapter_writer 与 run_prose_polisher **刻意不迁** ——
@@ -20,8 +20,8 @@
  *   · tools/tasks.ts     —— 断点续跑的调度侧（plan/claim/finish/fail）。它的活在
  *     chapterRuntime + generate_chapter 里；用户和中心 Agent 都不直接管 generation_tasks。
  *   · tools/index.ts     —— 旧出口（`export * from './chapter'` 指向不存在的文件），更早一批移走。
- * 移走它们的理由只有一个：它们 import my-app 的 service，而 my-app 写的
- * resources/myapp.sqlite 早已不是当前架构的数据源。**别再 import 它们。**
+ * 这些旧工具不能重新接入：它们绕过当前 controller/service 业务门面，或暴露了不应由中心 Agent
+ * 直接管理的底层调度动作。当前工具统一从 `agent/my-app` 门面调用，门面内部写 per-novel SQLite。
  * 要看某个子 agent 的提示词，去 agent/<Name>/prompt.ts，那是原件。
  * 口径提醒：**没有"子 agent 的工具"**——挂上的一律是中心 Agent 的工具。
  */

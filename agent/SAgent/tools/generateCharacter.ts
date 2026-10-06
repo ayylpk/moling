@@ -10,11 +10,10 @@ import { flavorOf, novelIdOf, novelOf, pack, renderWorld } from './context'
  * 角色生成工具 —— 把 Character agent 接到中心 Agent 手上（从旧的 run_character_designer 迁来）。
  *
  * ── 迁移改了什么 ──
- * 旧工具读资料走 `agent/my-app/src/service/*`（那是 resources/myapp.sqlite，另一个库）。
- * 现在**只读当前 per-novel 库**：
+ * 旧版本曾直接读取 service；现在通过 `agent/my-app` 门面**只读当前 per-novel 库**：
  *   · 世界观取 `worldRuntime.current()`
  *   · 已有角色取 `characterRuntime`（生成的卡要能和场上的人对得上）
- * 数据源只有一个 —— 这正是这次迁移要收掉的东西。
+ * 数据源只有一个，业务副作用统一由门面层负责。
  *
  * ── 它不落库 ──
  * 生成与落库是**两个动作**，采纳与否是中心 Agent 的决定：
