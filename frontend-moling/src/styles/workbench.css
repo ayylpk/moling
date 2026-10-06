@@ -348,6 +348,7 @@
 .novel-form__field > span i { color: var(--m-ink-3); font-size: 11px; font-style: normal; letter-spacing: 0; }
 .novel-form__field input, .novel-form__field textarea { width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid var(--m-line); border-radius: var(--radius-fine); background: #fbf8ef; color: var(--m-ink); font: inherit; font-size: 15px; resize: vertical; }
 .novel-form__field input:focus, .novel-form__field textarea:focus { outline: 1px solid var(--m-indigo); border-color: var(--m-indigo); }
+.novel-form__note { color: var(--m-ink-3); font-size: 12px; font-style: normal; line-height: 1.5; }
 .novel-form__error { margin: 14px 0 0; color: var(--m-cinnabar-deep); font-size: 13px; }
 .novel-modal__actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--m-line); }
 @media (max-width: 620px) { .novel-form__grid { grid-template-columns: 1fr; gap: 0; } .novel-modal { padding: 22px 20px; } }

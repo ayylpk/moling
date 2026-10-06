@@ -35,6 +35,18 @@ export default function Desk() {
   const [form, setForm] = useState({ title: '', genre: '', style: '', description: '', logline: '', target_words: '', themes: '' });
   /** bookId → 工作流摘要；取不到的那本不会出现在这里（卡片上就不画进度行） */
   const [progress, setProgress] = useState({});
+  /** 可选的文风与类型。后端加一种，这里自动多一项（清单来自磁盘目录，不在前端写死） */
+  const [flavors, setFlavors] = useState({ styles: [], genres: [] });
+  /** 后端发现风格名/题材名对不上任何片段时给的一句提示。null = 没问题 */
+  const [flavorHint, setFlavorHint] = useState({ style: null, genre: null });
+
+  useEffect(() => {
+    let active = true;
+    api.listFlavors()
+      .then((result) => { if (active) setFlavors({ styles: result?.styles ?? [], genres: result?.genres ?? [] }); })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, []);
 
   /* 书架一有变动就补一次工作流进度。每本一次请求：书架规模小，换来的是"进度永远与库同步" */
   useEffect(() => {
@@ -70,6 +82,9 @@ export default function Desk() {
     try {
       const created = await api.createNovel({ slug, title, genre: form.genre.trim(), style: form.style.trim(), description: form.description.trim(), logline: form.logline.trim(), target_words: targetWords, themes });
       setNovels((current) => [created, ...current]);
+      // 名字对不上任何片段时不拦建书（那可能是作者自定的文风），
+      // 但要说一声：没有片段 = 这一章的提示词里不会有那一段，作者会以为选了却没生效
+      setFlavorHint({ style: created?.flavorHints?.style ?? null, genre: created?.flavorHints?.genre ?? null });
       setNovelId(created.id);
       setCreating(false);
       setForm({ title: '', genre: '', style: '', description: '', logline: '', target_words: '', themes: '' });
@@ -99,7 +114,8 @@ export default function Desk() {
             </span>
           ))}
         </div>
-        <button type="button" className="btn btn--primary" onClick={() => { setError(''); setCreating(true); }}>
+        <button type="button" className="btn btn--primary" onClick={() => { setError(''); setFlavorHint({ style: null, genre: null });
+    setCreating(true); }}>
           ＋ 新建书稿
         </button>
       </div>
@@ -111,8 +127,24 @@ export default function Desk() {
             <p className="anno">先记录作品的基本方向，细纲与世界规则可以随后由中心 Agent 一起完善。</p>
             <label className="novel-form__field"><span>书名 <i>必填</i></span><input autoFocus value={form.title} onChange={update('title')} placeholder="例如：墨灵" /></label>
             <div className="novel-form__grid">
-              <label className="novel-form__field"><span>题材</span><input value={form.genre} onChange={update('genre')} placeholder="玄幻、都市……" /></label>
-              <label className="novel-form__field"><span>文风</span><input value={form.style} onChange={update('style')} placeholder="细腻、冷峻……" /></label>
+              <label className="novel-form__field">
+                <span>题材</span>
+                {/* 下拉 + 可自定义：清单来自后端磁盘目录，选中即命中片段；
+                    不在下拉里也能填（作者自定的题材照样建书，只是没有对应片段） */}
+                <input list="moling-genres" value={form.genre} onChange={update('genre')} placeholder="从下拉选，或自己写" />
+                <datalist id="moling-genres">
+                  {flavors.genres.map((item) => <option key={item} value={item} />)}
+                </datalist>
+                {flavorHint.genre && <em className="novel-form__note">没有「{form.genre}」的片段，可用：{flavorHint.genre.join('、')}</em>}
+              </label>
+              <label className="novel-form__field">
+                <span>文风</span>
+                <input list="moling-styles" value={form.style} onChange={update('style')} placeholder="从下拉选，或自己写" />
+                <datalist id="moling-styles">
+                  {flavors.styles.map((item) => <option key={item} value={item} />)}
+                </datalist>
+                {flavorHint.style && <em className="novel-form__note">没有「{form.style}」的片段，可用：{flavorHint.style.join('、')}</em>}
+              </label>
             </div>
             <label className="novel-form__field"><span>一句话故事</span><input value={form.logline} onChange={update('logline')} placeholder="主角是谁，想要什么，阻碍是什么？" /></label>
             <label className="novel-form__field"><span>作品简介</span><textarea rows="3" value={form.description} onChange={update('description')} placeholder="写下目前已有的故事构想……" /></label>

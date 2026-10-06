@@ -25,7 +25,17 @@ export const api = {
   /** 目录库里的全部小说（title/genre/style/description/logline/target_words/themes/status） */
   listNovels: () => request('/api/novels'),
   getNovel: (id) => request(`/api/novels/${id}`),
+  /** 建书。返回体除小说本身，还带 flavorHints：风格名拼错时给出正确候选（null 表示没问题） */
   createNovel: (novel) => request('/api/novels', { method: 'POST', body: JSON.stringify(novel) }),
+
+  /* ==================== 建书可选维度 ==================== */
+  /**
+   * 可选的文风与类型（{ styles: [...], genres: [...] }）。
+   *
+   * **清单来自后端磁盘上的目录，不在前端写死** —— 加一种文风是加一个文件，
+   * 这里和页面都不用动。哪个 agent 用哪些片段由后端决定，前端只管选名字。
+   */
+  listFlavors: () => request('/api/flavors'),
 
   /* ==================== 世界观 ==================== */
   listWorlds: (novelId) => request(`/api/novels/${novelId}/worlds`),

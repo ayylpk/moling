@@ -96,9 +96,26 @@ const server = Bun.serve({
       if (url.pathname === '/api/health') return json({ ok: true, storage: 'catalog + per-novel sqlite' })
 
       /* ==================== 书架 ==================== */
+      // 文风与类型的可选项放在最前面：前端建书表单要靠它渲染下拉，
+      // 而这个清单会随 agent/skills/ 下的目录变化而变，不该写死在前端
+      if (url.pathname === '/api/flavors' && request.method === 'GET') return json(catalog.listFlavors())
       if (parts[0] === 'api' && parts[1] === 'novels' && !parts[2]) {
         if (request.method === 'GET') return json(catalog.listNovels())
-        if (request.method === 'POST') return json(catalog.createNovel(await request.json() as NovelCreateInput), 201)
+        if (request.method === 'POST') {
+          const body = await request.json() as NovelCreateInput
+          const created = catalog.createNovel(body)
+          // 建书成功之后把「你是不是想写这个」带回去：拼错目录名不会报错，
+          // 但这本书就完全没有文风。**在返回值里说一声，而不是拒绝建书** ——
+          // 作者写"90年代港风"是合法的创作决定，替他拦下才是越权。
+          const flavor = catalog.checkFlavorNames(body)
+          return json({
+            ...created,
+            flavorHints: {
+              style: flavor.style.ok ? null : flavor.style.known,
+              genre: flavor.genre.ok ? null : flavor.genre.known,
+            },
+          }, 201)
+        }
       }
       if (novelPath && !parts[3] && request.method === 'GET') {
         const novel = catalog.getNovel(novelIdOf(parts[2]))
