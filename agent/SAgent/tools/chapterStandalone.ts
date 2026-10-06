@@ -97,6 +97,7 @@ export const generateChapterTool = tool(
                 cast: rendered.cast,
                 places: rendered.place,
                 style: novel.style || '无特别文风要求，按世界观基调走。',
+                genre: novel.genre || '未指定题材，严格遵守世界观与章纲。',
                 previous: previousText || '这是开篇，没有前情。',
                 chapter: rendered.chapter,
                 decisions: decisions?.trim() || '无',
@@ -118,6 +119,7 @@ export const generateChapterTool = tool(
             terms: brief.terms || '（这本书还没有专名表）',
             forbidden: brief.forbidden || '（无特别禁令）',
             style: novel.style || '按世界观基调走。',
+            genre: novel.genre || '未指定题材，严格遵守世界观与章纲。',
             text: input.draft.text,
           })
           const value = await polisher.invoke({

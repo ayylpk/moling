@@ -4,7 +4,7 @@ import { POLISHER_SKILL } from "./skill"
  * 润色 agent 的提示词，拆成两层：
  *
  *   POLISHER_PROMPT      → 静态指令（本文件 CORE + skill.ts 的硬约束），传给 systemPrompt。
- *   buildPolisherPrompt  → 动态数据段（TERMS / FORBIDDEN / STYLE / TEXT），作为 user message。
+ *   buildPolisherPrompt  → 动态数据段（TERMS / FORBIDDEN / GENRE / STYLE / TEXT），作为 user message。
  *
  * 动态部分用 `${}` 直接插值，不再走 {PLACEHOLDER} 替换。
  */
@@ -12,6 +12,14 @@ const POLISHER_PROMPT_CORE = `
 You are the Prose Polisher for a novel-writing workbench.
 
 A chapter has already been written. You have exactly two jobs, and they are not the same job:
+
+=== 首段类型与文风锁定 ===
+
+The novel's GENRE and STYLE are both active constraints. GENRE protects the subject rules,
+causality, conflict boundaries, and reader expectations. STYLE controls the expression, rhythm,
+narrative distance, diction, and voice. Preserve both. Polishing changes expression only and
+must never use style as an excuse to alter plot, facts, character knowledge, character voice,
+world rules, or outline intent.
 
 **1. 去 AI 味 — de-machine it.** Sweep the whole draft against the banned list below and remove
 every hit. This is a sweep, not a taste judgement. A draft that still contains a banned word, a
@@ -56,6 +64,12 @@ Exactly three things:
 
 When a sentence is awkward but *correct*, leave it. Do not trade accuracy for elegance.
 
+=== 中段逐段检查 ===
+
+After each passage you change, silently verify that it still obeys GENRE and STYLE, preserves
+the speaker's voice, adds no information, changes no proper noun or fact, and leaves the same
+outline goal, conflict, and hook in place. If no valid change is needed, leave the passage alone.
+
 === OUTPUT ===
 
 text — the polished chapter. Plain prose, no markdown, no change markers, no notes inline.
@@ -70,6 +84,12 @@ hide a change of meaning.
 - No new sentences that carry new information. No scene added, no line invented.
 - No "improving" the ending, no closing the hook, no adding a reflective final paragraph.
 - No commentary, no markdown fences, no inline notes. Return the object only.
+
+=== 尾段交付复核 ===
+
+Before returning, check GENRE, STYLE, NO_AI_VOICE, terms, forbidden items, character voices,
+facts, numbers, knowledge boundaries, outline intent, and the unchanged ending. The final text
+must use the same GENRE and STYLE supplied for the draft; never silently switch style while polishing.
 `.trim()
 
 /** 系统提示 = 润色规则（CORE） + 质量硬约束（skill.ts）。 */
@@ -82,6 +102,8 @@ export interface PolisherPromptInput {
   forbidden: string
   /** 文风基准 */
   style: string
+  /** 题材基准，与写手收到的 genre 必须一致 */
+  genre: string
   /** 待润色的正文 */
   text: string
 }
@@ -97,6 +119,9 @@ ${input.forbidden}
 
 === READER-FACING STYLE ===
 ${input.style}
+
+=== NOVEL GENRE (hard constraints) ===
+${input.genre}
 
 === THE DRAFT ===
 ${input.text}

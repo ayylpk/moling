@@ -4,13 +4,21 @@ import { WRITER_SKILL } from "./skill"
  * 正文 agent 的提示词，拆成两层：
  *
  *   WRITER_PROMPT      → 静态指令（本文件 CORE + skill.ts 的硬约束），传给 systemPrompt。
- *   buildWriterPrompt  → 动态数据段（WORLD / CAST / PLACES / STYLE / PREVIOUS /
+ *   buildWriterPrompt  → 动态数据段（WORLD / CAST / PLACES / GENRE / STYLE / PREVIOUS /
  *                        CHAPTER / DECISIONS），作为 user message 传进去。
  *
  * 动态部分用 `${}` 直接插值，不再走 {PLACEHOLDER} 替换。
  */
 const WRITER_PROMPT_CORE = `
 You are the Chapter Writer for a novel-writing workbench.
+
+=== 首段类型与文风锁定 ===
+
+The novel's GENRE and STYLE are both hard constraints for this chapter.
+GENRE controls the subject rules, causality, conflict boundaries, and reader expectations.
+STYLE controls the narrative distance, sentence shape, rhythm, diction, and voice.
+Use the exact genre and style supplied by the caller. Do not replace them with your own taste,
+and do not let style change world facts, outline facts, character knowledge, or decisions.
 
 You write the prose of exactly ONE chapter. Everything upstream is already decided: the
 world, the cast, the places, the style, and what happens in this chapter. Your job is to
@@ -51,6 +59,14 @@ chapter is a sketch; coming in far long means you added material that was not as
 was decided, even if you would have chosen differently. Note that a decision and its
 reason are yours to dramatise, not to re-litigate.
 
+=== 中段场景检查 ===
+
+After each major scene, silently check all four points before continuing:
+- the event obeys the GENRE rules;
+- the prose still carries the STYLE;
+- each character still sounds like their card;
+- no event, person, place, or knowledge was added beyond the chapter outline.
+
 === HARD BANS ===
 - No character, place, event or plot beat that is not in this chapter's outline.
 - No renaming anything in the world's terms table.
@@ -58,6 +74,12 @@ reason are yours to dramatise, not to re-litigate.
 - No resolving the hook. No epilogue paragraph after it.
 - No narrator essays, no summary of what the chapter meant.
 - No markdown, no headings, no scene-divider labels, no commentary. Return the object only.
+
+=== 尾段交付复核 ===
+
+Before returning the chapter, verify GENRE, STYLE, WORLD, CAST, PLACES, the outline goal/conflict/hook,
+DECISIONS, proper nouns, forbidden items, and character knowledge one last time. If STYLE conflicts
+with a world or outline fact, preserve the fact and express it in the closest valid style.
 `.trim()
 
 /** 系统提示 = 写作规则（CORE） + 质量硬约束（skill.ts）。 */
@@ -72,6 +94,8 @@ export interface WriterPromptInput {
   places: string
   /** 文风 */
   style: string
+  /** 题材；与 style 必须来自同一部小说的同一次配置 */
+  genre: string
   /** 上一章结尾 + 相关伏笔的当前状态 */
   previous: string
   /** 本章的章纲条目 */
@@ -94,6 +118,9 @@ ${input.places}
 
 === READER-FACING STYLE ===
 ${input.style}
+
+=== NOVEL GENRE (hard constraints) ===
+${input.genre}
 
 === WHAT HAPPENED JUST BEFORE ===
 ${input.previous}

@@ -42,6 +42,24 @@ export type AgentKey = 'story-planner' | 'character' | 'location' | 'architect' 
  */
 export type Flavor = { style?: string; genre?: string }
 
+/**
+ * 所有会产出或验收小说内容的 agent 共用的风格同步契约。
+ *
+ * 题材与文风是两个正交维度：题材决定写什么、什么因果成立；文风决定怎么写。
+ * 把这段规则集中在 loader，避免 writer、polisher 和各类 agent 的边界逐渐漂移。
+ */
+export const FLAVOR_SYNC_RULES = `
+=== 类型与文风同步契约（必须执行）===
+
+类型决定题材规则、世界运行方式、冲突边界和读者预期；文风决定叙述距离、句式、节奏、词语与表达声音。
+两者都必须生效，但职责不能互换：类型回答“写什么、哪些因果成立”，文风回答“怎么写、以什么声音呈现”。
+世界观、章纲、角色卡、地点卡与裁决结果是事实硬约束，类型和文风都不能覆盖它们。
+
+每次开始产出前，确认当前请求收到同一份小说 genre 与 style，并确认对应片段已经被加载；自由文本也必须作为约束执行，不能因为没有同名片段就忽略。
+每个主要场景完成后，检查事件是否符合类型规则、表达是否符合文风、角色声音是否稳定、是否引入了章纲之外的剧情。
+交付前再次核对类型、文风、世界观、章纲、角色声音、专名与禁语；发现冲突时，事实硬约束优先，不能用“风格需要”掩盖越界。
+`.trim()
+
 /** 片段文件扩展名。用 .md 是因为它们就是给人看的、也要能被人改 */
 const FRAGMENT_EXT = '.md'
 
@@ -125,7 +143,9 @@ export const composePrompt = (
   const styleFragment = styleName ? readFragment(STYLE_DIR, styleName, agent) : null
   const genreFragment = genreName ? readFragment(GENRE_DIR, genreName, agent) : null
 
-  return [base, genreFragment, styleFragment, redLines].filter((part): part is string => Boolean(part)).join('\n\n')
+  return [base, FLAVOR_SYNC_RULES, genreFragment, styleFragment, redLines]
+    .filter((part): part is string => Boolean(part))
+    .join('\n\n')
 }
 
 /** 拼完的提示词有多长 —— 供调试与 token 预算用 */

@@ -16,6 +16,7 @@ const TERMS = "换骨续命 / 药引 / 应允 / 青州旧观 / 镇北司";
 const FORBIDDEN = "不许出现无代价的延寿；不许出现以强迫手段生效的应允。";
 
 const STYLE = "冷硬白描，句子短，少形容词。情感靠动作和物件传递，不靠心理独白。";
+const GENRE = "玄幻，世界规则必须有代价，冲突通过具体行动与选择呈现。";
 
 /** 刻意塞满了禁用词、二分对照壳、破折号、安全比喻、段尾抽象收束 */
 const DRAFT = `沈砚不由得停住了脚步。他心中暗道，这扇门不对劲。
@@ -52,7 +53,7 @@ const result = await polisherAgent.invoke({
   messages: [
     {
       role: "user",
-      content: buildPolisherPrompt({ terms: TERMS, forbidden: FORBIDDEN, style: STYLE, text }),
+      content: buildPolisherPrompt({ terms: TERMS, forbidden: FORBIDDEN, style: STYLE, genre: GENRE, text }),
     },
   ],
 });

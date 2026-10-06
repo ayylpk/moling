@@ -36,6 +36,7 @@ const PLACES = `
 `;
 
 const STYLE = "冷硬白描，句子短，少形容词。情感靠动作和物件传递，不靠心理独白。";
+const GENRE = "玄幻，世界规则必须有代价，冲突通过具体行动与选择呈现。";
 
 const PREVIOUS =
   "第 1 章《旧观无主》：沈砚清点师父遗物，沈无咎替他挡下上门问话的镇北司差役。夜里他发现师父旧居的锁被撬开过，锁孔里有新铜屑。";
@@ -86,6 +87,7 @@ const result = await writerAgent.invoke({
         cast: CAST,
         places: PLACES,
         style: STYLE,
+        genre: GENRE,
         previous: PREVIOUS,
         chapter,
         decisions: DECISIONS,

@@ -55,6 +55,7 @@ const STYLE = `
 冷硬白描，句子短，少形容词。情感靠动作和物件传递，不靠心理独白。
 对话口语化，符合高三学生的说话方式。南方的潮、热、雨要有体感。
 `;
+const GENRE = "现实校园恋爱，核心冲突来自人物选择与关系变化；不得引入异能、战斗或真实地名。";
 
 // ─────────────────────────────────────────────────────────────
 
@@ -613,6 +614,7 @@ if (stage === "chapter") {
           cast: castText,
           places: placeText,
           style: STYLE,
+          genre: GENRE,
           previous: prevText,
           chapter: renderChapter(),
           decisions: "无（本章没有需要裁决的分叉点）",
@@ -634,6 +636,7 @@ if (stage === "chapter") {
           terms: world.terms.map((t: any) => t.name).join(" / "),
           forbidden: world.forbidden.join("\n"),
           style: STYLE,
+          genre: GENRE,
           text: wrote.text,
         }),
       },
