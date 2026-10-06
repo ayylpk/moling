@@ -3,6 +3,8 @@ import type { BaseChatModel } from "@langchain/core/language_models/chat_models"
 import { createModel } from "../create_model"
 import * as z from "zod"
 import { WORLD_AGENT_SYSTEM_PROMPT } from "./promopt"
+import { composePrompt, type Flavor } from "../skills"
+import { NO_AI_VOICE } from "../skills"
 
 export interface World {
   premise: string;           // 一句话前提，唯一，裁决冲突的锚
@@ -90,10 +92,10 @@ export const setWorld = tool(
   }
 )
 
-export function createWorldAgent(model: BaseChatModel = createModel(0.2)) {
+export function createWorldAgent(model: BaseChatModel = createModel(0.2), flavor: Flavor = {}) {
   return createAgent({
     model,
-    systemPrompt: WORLD_AGENT_SYSTEM_PROMPT,
+    systemPrompt: composePrompt(WORLD_AGENT_SYSTEM_PROMPT, 'story-planner', flavor.style, flavor.genre, NO_AI_VOICE),
     responseFormat: WorldSchema,
     name: "worldbuilding_agent",
     description: "Creates and revises a novel's coherent world bible.",

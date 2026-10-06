@@ -4,7 +4,7 @@ import * as z from 'zod'
 import { createLocationAgent } from '../../Location/agent'
 import { buildLocationPrompt } from '../../Location/prompt'
 import { location as locationApi } from '../../my-app'
-import { novelIdOf, pack, renderWorld } from './context'
+import { flavorOf, novelIdOf, pack, renderWorld } from './context'
 
 /**
  * 地点生成工具 —— 把 Location agent 接到中心 Agent 手上（从旧的 run_location_designer 迁来）。
@@ -29,7 +29,7 @@ export const generateLocation = tool(
       existing: places.length ? places.map((l) => `- ${l.name}（挂在：${l.parentRaw || '—'}）`).join('\n') : '（暂无）',
     }
 
-    const agent = createLocationAgent()
+    const agent = createLocationAgent(undefined, flavorOf(config))
     const res = await agent.invoke({
       messages: [{ role: 'user', content: buildLocationPrompt({ world: input.world, existing: input.existing, need }) }],
     })

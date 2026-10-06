@@ -4,7 +4,7 @@ import * as z from 'zod'
 import { createActorAgent, type Actor, type ActorScene } from '../../Actor/agent'
 import { buildActorPrompt } from '../../Actor/prompt'
 import { character as characterApi } from '../../my-app'
-import { novelIdOf, pack } from './context'
+import { flavorOf, novelIdOf, pack } from './context'
 
 /**
  * 角色裁决生成工具 —— 把 Actor agent 接到中心 Agent 手上（从旧的 run_character_actor 迁来）。
@@ -55,7 +55,7 @@ export const generateDecision = tool(
 
     // ② 调 Actor agent（它拿到的只是几段文本，没有任何数据库连接）
     const scene: ActorScene = { story, situation, options, chatPrompt }
-    const agent = createActorAgent()
+    const agent = createActorAgent(undefined, flavorOf(config))
     const res = await agent.invoke({
       messages: [{ role: 'user', content: buildActorPrompt({ actor, scene }) }],
     })

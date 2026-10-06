@@ -4,7 +4,7 @@ import * as z from 'zod'
 import { createCharacterAgent } from '../../Character/agent'
 import { buildCharacterPrompt } from '../../Character/prompt'
 import { character as characterApi } from '../../my-app'
-import { novelIdOf, novelOf, pack, renderWorld } from './context'
+import { flavorOf, novelIdOf, novelOf, pack, renderWorld } from './context'
 
 /**
  * 角色生成工具 —— 把 Character agent 接到中心 Agent 手上（从旧的 run_character_designer 迁来）。
@@ -41,7 +41,7 @@ export const generateCharacter = tool(
     }
 
     // ② 调角色 agent（它拿到的只是几段文本，没有任何数据库连接）
-    const agent = createCharacterAgent()
+    const agent = createCharacterAgent(undefined, flavorOf(config))
     const res = await agent.invoke({
       messages: [
         {

@@ -3,6 +3,8 @@ import type { BaseChatModel } from "@langchain/core/language_models/chat_models"
 import { createModel } from "../create_model"
 import * as z from "zod"
 import { CHARACTER_PROMPT } from "./prompt"
+import { composePrompt, type Flavor } from "../skills"
+import { NO_AI_VOICE } from "../skills"
 
 export interface character{
     name: string;
@@ -41,10 +43,10 @@ const CharacterSchema = z.object({
 export type CharacterInput = z.input<typeof CharacterSchema>
 export type CharacterOutput = z.output<typeof CharacterSchema>
 
-export function createCharacterAgent(model: BaseChatModel = createModel(0.4)){
+export function createCharacterAgent(model: BaseChatModel = createModel(0.4), flavor: Flavor = {}) {
   return createAgent({
     model,
-    systemPrompt: CHARACTER_PROMPT,
+    systemPrompt: composePrompt(CHARACTER_PROMPT, 'character', flavor.style, flavor.genre, NO_AI_VOICE),
     responseFormat: CharacterSchema,
     name: "CharacterBuildingAgent",
     description:

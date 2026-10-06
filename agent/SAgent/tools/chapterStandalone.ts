@@ -8,7 +8,7 @@ import { buildWriterPrompt } from '../../writer/prompt'
 import { createPolisherAgent } from '../../Polisher/agent'
 import { buildPolisherPrompt } from '../../Polisher/prompt'
 import { createChapterWorkflow, type ChapterDraft, type ChapterPolish } from '../chapterWorkflow'
-import { novelIdOf, novelOf } from './context'
+import { flavorOf, novelIdOf, novelOf } from './context'
 
 /**
  * 润色重试的追加句。
@@ -60,8 +60,8 @@ export const generateChapterTool = tool(
     // 温度沿用原值（writer 0.7 / polisher 0.3）。maxTokens 必须显式给：
     // 一章正文 3000–4000 字 ≈ 6000+ token，加上 summary/endsWith 与 JSON 结构开销，
     // 不给上限时长章会中途截断 —— 而截断出来的正文读着还挺完整，只是结尾断在半句上。
-    const writer = createWriterAgent(createModel(0.7, 300_000, false, 8192))
-    const polisher = createPolisherAgent(createModel(0.3, 180_000, false, 8192))
+    const writer = createWriterAgent(createModel(0.7, 300_000, false, 8192), flavorOf(config))
+    const polisher = createPolisherAgent(createModel(0.3, 180_000, false, 8192), flavorOf(config))
 
     // 一次开库跑完整条链：plan → claim → 执笔 → draft → 润色 → final → 收尾。
     // 中间夹着两次模型调用，逐步开库关库既慢，也让「这一章的多个步骤」没有同一个事务视角。

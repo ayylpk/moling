@@ -1,6 +1,7 @@
 import type { RunnableConfig } from '@langchain/core/runnables'
 
 import { listNovelsInCatalog, world as worldApi, type CatalogNovel } from '../../my-app'
+import type { Flavor } from '../../skills'
 
 /**
  * tool 层的公共上下文 —— 拆到 my-app 之后这里只剩三件事。
@@ -30,6 +31,22 @@ export const novelOf = (config?: RunnableConfig): CatalogNovel => {
   const found = listNovelsInCatalog().find((novel) => novel.id === id)
   if (!found) throw new Error(`小说不存在：novelId=${id}`)
   return found
+}
+
+/**
+ * 这本书的「文风 + 类型」，给 createXxxAgent 的第二个参数。
+ *
+ * ── 为什么所有生成工具都要过这里 ──
+ * style 与 genre 是**建书时作者定的**，不是生成时临时想的。散在 5 个工具里各写一遍
+ * `createAgent(undefined, { style: novel.style, genre: novel.genre })`，
+ * 下一个新工具就会忘 —— 那个工具产出的东西就少了文风，而它自己不报错，
+ * 只是读起来"不太像这本书"。收在一处之后，漏掉的成本变成"这个工具用不了这个函数"。
+ *
+ * 值是自由文本：命中 skills 目录就用片段，不命中就把原文当说明用（见 loader）。
+ */
+export const flavorOf = (config?: RunnableConfig): Flavor => {
+  const novel = novelOf(config)
+  return { style: novel.style, genre: novel.genre }
 }
 
 /** 工具的返回格式：一顶 label + 内容。工具结果最终会进中心上下文，别塞全文 */

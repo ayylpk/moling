@@ -2,7 +2,7 @@ import { tool } from 'langchain'
 import * as z from 'zod'
 
 import { createWorldAgent, parseWorld } from '../../story-planner/agent'
-import { novelOf, pack } from './context'
+import { flavorOf, novelOf, pack } from './context'
 
 /**
  * 世界观生成工具 —— 把世界 agent 接到中心 Agent 手上（从旧的 run_world_planner 迁来）。
@@ -29,7 +29,7 @@ export const generateWorld = tool(
   async ({ need, name }, config) => {
     const novel = novelOf(config)
 
-    const agent = createWorldAgent()
+    const agent = createWorldAgent(undefined, flavorOf(config))
     const res = await agent.invoke({
       messages: [
         {

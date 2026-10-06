@@ -88,3 +88,8 @@ export const NO_AI_VOICE = `
 `.trim();
 
 export default NO_AI_VOICE;
+
+/* ==================== 文风 / 类型片段（loader） ==================== */
+// 文风与类型是两个正交的可替换维度：加一种文风 = 加一个目录，代码不动。
+// 拼接顺序与理由见 loader.ts 的注释。
+export { composePrompt, listStyles, listGenres, describeComposition, assertDimensionMatches, STYLE_DIR, GENRE_DIR, type AgentKey, type Flavor } from './loader'

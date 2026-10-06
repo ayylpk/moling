@@ -3,6 +3,8 @@ import type { BaseChatModel } from "@langchain/core/language_models/chat_models"
 import { createModel } from "../create_model"
 import * as z from "zod"
 import { ACTOR_PROMPT } from "./prompt"
+import { composePrompt, type Flavor } from "../skills"
+import { NO_AI_VOICE } from "../skills"
 
 /**
  * 扮演一个角色所需的最小切片。字段全部来自 Character，但**只挑能驱动行动的**：
@@ -64,10 +66,10 @@ export const ActorChoiceSchema = z.object({
 
 export type ActorChoice = z.output<typeof ActorChoiceSchema>
 
-export function createActorAgent(model: BaseChatModel = createModel(0.2)) {
+export function createActorAgent(model: BaseChatModel = createModel(0.2), flavor: Flavor = {}) {
   return createAgent({
     model,
-    systemPrompt: ACTOR_PROMPT,
+    systemPrompt: composePrompt(ACTOR_PROMPT, 'actor', flavor.style, flavor.genre, NO_AI_VOICE),
     responseFormat: ActorChoiceSchema,
     name: "ActorAgent",
     description:

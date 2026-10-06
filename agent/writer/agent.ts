@@ -3,6 +3,8 @@ import type { BaseChatModel } from "@langchain/core/language_models/chat_models"
 import { createModel } from "../create_model"
 import * as z from "zod"
 import { WRITER_PROMPT } from "./prompt"
+import { composePrompt, type Flavor } from "../skills"
+import { NO_AI_VOICE } from "../skills"
 
 /**
  * 一章正文的产出。
@@ -29,10 +31,10 @@ export const ChapterTextSchema = z.object({
 
 export type ChapterText = z.output<typeof ChapterTextSchema>
 
-export function createWriterAgent(model: BaseChatModel = createModel(0.7)) {
+export function createWriterAgent(model: BaseChatModel = createModel(0.7), flavor: Flavor = {}) {
   return createAgent({
     model,
-    systemPrompt: WRITER_PROMPT,
+    systemPrompt: composePrompt(WRITER_PROMPT, 'writer', flavor.style, flavor.genre, NO_AI_VOICE),
     responseFormat: ChapterTextSchema,
     name: "ChapterWriterAgent",
     description:

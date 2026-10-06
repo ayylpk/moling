@@ -3,6 +3,8 @@ import type { BaseChatModel } from "@langchain/core/language_models/chat_models"
 import { createModel } from "../create_model"
 import * as z from "zod"
 import { ARCHITECT_PROMPT } from "./prompt"
+import { composePrompt, type Flavor } from "../skills"
+import { NO_AI_VOICE } from "../skills"
 
 
 export interface Outline {
@@ -177,10 +179,10 @@ const OutlineSchema = z.object({
 export type OutlineInput = z.input<typeof OutlineSchema>
 export type OutlineOutput = z.output<typeof OutlineSchema>
 
-export function createArchitectAgent(model: BaseChatModel = createModel(0.5)){
+export function createArchitectAgent(model: BaseChatModel = createModel(0.5), flavor: Flavor = {}) {
   return createAgent({
     model,
-    systemPrompt: ARCHITECT_PROMPT,
+    systemPrompt: composePrompt(ARCHITECT_PROMPT, 'architect', flavor.style, flavor.genre, NO_AI_VOICE),
     responseFormat: OutlineSchema,
     name: "OutlineBuildAgent",
     description:

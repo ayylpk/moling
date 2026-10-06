@@ -3,6 +3,8 @@ import type { BaseChatModel } from "@langchain/core/language_models/chat_models"
 import { createModel } from "../create_model"
 import * as z from "zod"
 import { LOCATION_PROMPT } from "./prompt"
+import { composePrompt, type Flavor } from "../skills"
+import { NO_AI_VOICE } from "../skills"
 
 export const LocationSchema = z.object({
   name: z.string().describe("地名"),
@@ -15,10 +17,10 @@ export const LocationSchema = z.object({
 export type LocationInput = z.input<typeof LocationSchema>
 export type LocationOutput = z.output<typeof LocationSchema>
 
-export function createLocationAgent(model: BaseChatModel = createModel(0.6)) {
+export function createLocationAgent(model: BaseChatModel = createModel(0.6), flavor: Flavor = {}) {
   return createAgent({
     model,
-    systemPrompt: LOCATION_PROMPT,
+    systemPrompt: composePrompt(LOCATION_PROMPT, 'location', flavor.style, flavor.genre, NO_AI_VOICE),
     responseFormat: LocationSchema,
     name: "LocationBuildingAgent",
     description:

@@ -5,7 +5,7 @@ import { createModel } from '../../create_model'
 import { createArchitectAgent } from '../../Architect/agent'
 import { buildArchitectPrompt } from '../../Architect/prompt'
 import { character as characterApi } from '../../my-app'
-import { novelIdOf, novelOf, pack, renderWorld } from './context'
+import { flavorOf, novelIdOf, novelOf, pack, renderWorld } from './context'
 
 /**
  * 大纲生成工具 —— 把 Architect agent 接到中心 Agent 手上（从旧的 run_outline_architect 迁来）。
@@ -37,7 +37,7 @@ export const generateOutline = tool(
     }
 
     // 架构师要一口气写一卷，输出额度给足；温度沿用 0.5
-    const agent = createArchitectAgent(createModel(0.5, 180_000, false, 8192))
+    const agent = createArchitectAgent(createModel(0.5, 180_000, false, 8192), flavorOf(config))
     const res = await agent.invoke({
       messages: [
         {

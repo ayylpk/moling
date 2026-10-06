@@ -3,6 +3,8 @@ import type { BaseChatModel } from "@langchain/core/language_models/chat_models"
 import { createModel } from "../create_model"
 import * as z from "zod"
 import { POLISHER_PROMPT } from "./prompt"
+import { composePrompt, type Flavor } from "../skills"
+import { NO_AI_VOICE } from "../skills"
 
 /**
  * 润色结果。
@@ -30,10 +32,10 @@ export const PolishedTextSchema = z.object({
 
 export type PolishedText = z.output<typeof PolishedTextSchema>
 
-export function createPolisherAgent(model: BaseChatModel = createModel(0.3)) {
+export function createPolisherAgent(model: BaseChatModel = createModel(0.3), flavor: Flavor = {}) {
   return createAgent({
     model,
-    systemPrompt: POLISHER_PROMPT,
+    systemPrompt: composePrompt(POLISHER_PROMPT, 'polisher', flavor.style, flavor.genre, NO_AI_VOICE),
     responseFormat: PolishedTextSchema,
     name: "ProsePolisherAgent",
     description:
