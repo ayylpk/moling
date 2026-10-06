@@ -91,6 +91,21 @@ export default function Desk() {
     } catch (cause) { setError(cause.message || '创建失败，请检查服务是否启动。'); }
     finally { setSaving(false); }
   };
+  /**
+   * 这个题材/文风在清单里吗？不在 = 没有对应片段，这一章的提示词里不会有那一段。
+   *
+   * **为什么要在书架上标出来**：拼错的后果是沉默的 —— 书照写，章节照出，
+   * 只是每章都读着"有点不对"，而没有任何地方会报错。建书弹窗里提示过一次就关了，
+   * 作者多半不会记得。书架是他每次进来都会看到的地方，所以要在这里再说一次。
+   *
+   * 清单取不到（后端没起）时一律当作"有"：不因为接口失败而给每本书挂一个假警告。
+   */
+  const flavorKnown = (name, list) => {
+    const value = (name ?? '').trim();
+    if (!value || list.length === 0) return true;
+    return list.includes(value);
+  };
+
   const chips = [
     { key: 'all', label: '全部' },
     ...Object.entries(NOVEL_STATUS_META).map(([key, meta]) => ({ key, label: meta.label })),
@@ -178,8 +193,14 @@ export default function Desk() {
                 <span className={`status ${meta.cls}`}>{meta.label}</span>
               </div>
               <div className="book__meta">
-                <span className="chip">{book.genre || '未定题材'}</span>
-                <span className="chip">{book.style || '未定文风'}</span>
+                <span className={`chip${flavorKnown(book.genre, flavors.genres) ? '' : ' chip--off'}`}>
+                  {book.genre || '未定题材'}
+                  {flavorKnown(book.genre, flavors.genres) ? '' : ' ·无片段'}
+                </span>
+                <span className={`chip${flavorKnown(book.style, flavors.styles) ? '' : ' chip--off'}`}>
+                  {book.style || '未定文风'}
+                  {flavorKnown(book.style, flavors.styles) ? '' : ' ·无片段'}
+                </span>
                 <span className="chip">{book.target_words ? `${Math.round(book.target_words / 10000)} 万字` : '未定字数'}</span>
               </div>
               {themes.length > 0 && (

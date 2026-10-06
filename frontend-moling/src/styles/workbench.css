@@ -265,6 +265,13 @@
   white-space: nowrap;
 }
 
+/* 这个题材/文风在 skills 目录下没有对应片段 —— 提示词里不会有那一段。
+   用虚线边而不是醒目配色：它不是错误（那可能是作者自定的文风），只是"没生效"。 */
+.chip--off {
+  border-style: dashed;
+  color: var(--m-ink-3);
+}
+
 .chip-row {
   display: flex;
   flex-wrap: wrap;

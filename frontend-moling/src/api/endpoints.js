@@ -15,15 +15,30 @@
  * 没有第二个后端了：旧的 `agent/my-app/src/index.ts`（Hono，同样监听 :3000）
  * 已不在运行配方里，其独占路由（worlds/search、generation/*、decisions）**不再提供**。
  * 任务队列（generation_tasks）与记忆链路都是内部实现，不对外开接口。
+ *
+ * ── 两条容易踩的约定 ──
+ * ① **凡是只有 chapterId 的路由都必须带 novelId**（`?novelId=`）。
+ *    chapterId 是每本书各自从 1 开始的自增主键，挨本找会写到别人的书里。
+ * ② `/api/flavors` 的清单**读的是 agent/skills/ 下的目录**，不在代码里写死。
+ *    加一种文风或类型就是加一个目录，这个接口与前端的下拉自动跟着变。
  */
 export const API = {
   /* ==================== 小说（目录库） ==================== */
   /** GET /api/novels —— 全部小说（按 updated_at 倒序） */
   novels: () => '/api/novels',
-  /** POST /api/novels —— body: {slug,title,genre?,style?,description?,logline?,target_words?,themes?,status?} */
+  /**
+   * POST /api/novels —— body: {slug,title,genre?,style?,description?,logline?,target_words?,themes?,status?}
+   * 返回体除小说本身还带 `flavorHints`：{ style: string[]|null, genre: string[]|null }。
+   * 非 null = 这个名字在 skills 目录下没有片段（可能是拼错，也可能是作者自定的文风）。
+   * **它不拦建书** —— 提示而已，拦下来是替作者做主。
+   */
   createNovel: '/api/novels',
   /** GET /api/novels/:id */
   novel: (id) => `/api/novels/${id}`,
+
+  /* ==================== 建书可选维度 ==================== */
+  /** GET /api/flavors —— { styles: string[], genres: string[] }，取自 agent/skills/ 下的目录名 */
+  flavors: () => '/api/flavors',
 
   /* ==================== 世界观（多版本） ==================== */
   /** GET /api/novels/:id/worlds —— 全部版本（读当前版本取列表第一项） */
@@ -51,18 +66,22 @@ export const API = {
   /* ==================== 卷与章 ==================== */
   volumes: (novelId) => `/api/novels/${novelId}/volumes`,
   createVolume: (novelId) => `/api/novels/${novelId}/volumes`,
+  /** GET /api/novels/:id/chapters —— 章纲 + textStage（final → draft → none 现算） */
   chapters: (novelId) => `/api/novels/${novelId}/chapters`,
+  /** POST /api/novels/:id/chapters —— body 可传单条或 { volume_no, chapters: [...] }（逐条兜错） */
   createChapter: (novelId) => `/api/novels/${novelId}/chapters`,
-  /** PUT /api/chapters/:id —— body: {title?,goal?,conflict?,hook?,emotion?,summary?,place?,word_count_target?} */
-  chapter: (chapterId) => `/api/chapters/${chapterId}`,
+  /** PUT /api/chapters/:id?novelId= —— body: {title?,goal?,conflict?,hook?,emotion?,summary?,place?,word_count_target?} */
+  chapter: (chapterId, novelId) => `/api/chapters/${chapterId}?novelId=${novelId}`,
 
   /* ==================== 正文 ==================== */
-  /** GET/PUT /api/chapters/:id/text?stage=draft|final */
-  chapterText: (chapterId, stage = 'draft') => `/api/chapters/${chapterId}/text?stage=${stage}`,
+  /** GET/PUT /api/chapters/:id/text?stage=draft|final&novelId= */
+  chapterText: (chapterId, stage = 'draft', novelId) => `/api/chapters/${chapterId}/text?stage=${stage}&novelId=${novelId}`,
 
   /* ==================== 中心 Agent 与工作流状态 ==================== */
   /** POST /api/novels/:id/chat —— body: {message, history?}；唯一与作者对话的入口 */
   chat: (novelId) => `/api/novels/${novelId}/chat`,
   /** GET /api/novels/:id/workflow —— {phase,label,total,done,running,failed,byStage}（只有聚合值） */
   workflow: (novelId) => `/api/novels/${novelId}/workflow`,
+  /** GET /api/novels/:id/agents —— 执笔画布的灯位视图（七盏灯 + 案心） */
+  agents: (novelId) => `/api/novels/${novelId}/agents`,
 };
