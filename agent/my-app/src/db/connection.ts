@@ -57,7 +57,19 @@ const migrateMemorySchema = (database: Database): void => {
   }
 }
 export const initializeNovelSchema = (database: Database): void => { database.run('PRAGMA foreign_keys = ON'); for (const ddl of NOVEL_SCHEMA) database.run(ddl); migrateMemorySchema(database) }
-export const openNovelDatabase = (slug: string): Database => { if (!NOVEL_SLUG_PATTERN.test(slug)) throw new TypeError('小说 slug 不符合目录名规则'); ensureStorageRoot(); const novelDir = path.join(novelsDir, slug); fs.mkdirSync(novelDir, { recursive: true }); const database = new Database(path.join(novelDir, 'novel.sqlite'), { create: true }); initializeNovelSchema(database); return database }
+/**
+ * 一本小说的数据目录。
+ *
+ * 单独抽出来是因为**删书要挪它** —— 路径规则和建库规则必须出自同一处，
+ * 各写一份迟早会有一个写到别的地方去（`connection.ts` 退错层数就会把库
+ * 建到没人读得到的地方，这个坑踩过）。
+ */
+export const novelDirectory = (slug: string): string => {
+  if (!NOVEL_SLUG_PATTERN.test(slug)) throw new TypeError('小说 slug 不符合目录名规则')
+  return path.join(novelsDir, slug)
+}
+
+export const openNovelDatabase = (slug: string): Database => { const novelDir = novelDirectory(slug); ensureStorageRoot(); fs.mkdirSync(novelDir, { recursive: true }); const database = new Database(path.join(novelDir, 'novel.sqlite'), { create: true }); initializeNovelSchema(database); return database }
 export function withNovelDatabase<T>(slug: string, action: (database: Database) => T): T { const database = openNovelDatabase(slug); try { return action(database) } finally { database.close() } }
 
 /**

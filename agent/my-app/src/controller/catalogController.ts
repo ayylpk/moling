@@ -1,6 +1,14 @@
 import { assertDimensionMatches, GENRE_DIR, STYLE_DIR } from '../../../skills'
 import { listNovelsInCatalog, type CatalogNovel } from '../db/connection'
-import { createNovelInCatalog, getNovelInCatalog, type NovelCreateInput } from '../service/catalogService'
+import {
+  createNovelInCatalog,
+  getNovelInCatalog,
+  removeNovelFromCatalog,
+  updateNovelFlavorsInCatalog,
+  type NovelCreateInput,
+  type NovelFlavorInput,
+  type NovelRemoval,
+} from '../service/catalogService'
 
 /**
  * 书架 controller —— 目录库的动作。
@@ -12,6 +20,23 @@ export const listNovels = (): CatalogNovel[] => listNovelsInCatalog()
 export const getNovel = (novelId: number): CatalogNovel | null => getNovelInCatalog(novelId)
 
 export const createNovel = (input: NovelCreateInput): CatalogNovel => createNovelInCatalog(input)
+
+/**
+ * 改已建好那本书的题材与文风。
+ *
+ * 用 PUT 而不是 PATCH，是因为它和本仓库其它更新接口（角色、世界观）同一个口径：
+ * **给了的字段覆盖，没给的保持原样**。CORS 白名单里也已经允许 PUT。
+ */
+export const updateNovelFlavors = (novelId: number, input: NovelFlavorInput): CatalogNovel =>
+  updateNovelFlavorsInCatalog(novelId, input)
+
+/**
+ * 从书架移除一本书。
+ *
+ * **书稿文件不会真删**（挪进 `.workbuddy/novel-trash/`），但目录库那一行会删掉，
+ * 所以恢复要两步 —— 详见 `catalogService.removeNovelFromCatalog`。
+ */
+export const removeNovel = (novelId: number): NovelRemoval => removeNovelFromCatalog(novelId)
 
 /**
  * 建书前校验：文风与类型有没有写错。

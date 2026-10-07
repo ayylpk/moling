@@ -8,11 +8,11 @@ import { api } from '../api/client.js';
  *
  * 数据来自当前基座（agent/storage/server.ts）的三条接口：
  *   GET /api/novels/:id/volumes         —— 卷表（卷号 / 卷名 / 起止章）
- *   GET /api/novels/:id/chapters        —— 章表（含 volume_id / 章纲五字段 / textStage）
+ *   GET /api/novels/:id/chapters        —— 章表（含 volumeId / 章纲五字段 / textStage）
  *   GET / PUT /api/chapters/:id/text    —— 某一阶段正文
  *
- * 卷**以卷表为准**（卷名与卷号是真的），章按 volume_id 挂到卷下；
- * 万一卷表还没建（只落了章纲），退回按 volume_id 现推、卷号只能用序号。
+ * 卷**以卷表为准**（卷名与卷号是真的），章按 volumeId 挂到卷下；
+ * 万一卷表还没建（只落了章纲），退回按 volumeId 现推、卷号只能用序号。
  *
  * 保存三层兜底：确认按钮即时存 → 改动后 10 秒自动存 → 离开页面前再存一次；
  * 每次落盘前先写 localStorage，API 不通时至少不丢字。
@@ -39,18 +39,18 @@ export default function Manuscript() {
   const [exporting, setExporting] = useState(false);
   const [notice, setNotice] = useState('');
 
-  /* 卷：以卷表为准（卷名/卷号是真的），章按 volume_id 挂上去 */
+  /* 卷：以卷表为准（卷名/卷号是真的），章按 volumeId 挂上去 */
   const volumes = useMemo(() => {
     const byVolume = new Map();
     for (const chapter of chapters) {
-      const key = chapter.volume_id ?? 0;
+      const key = chapter.volumeId ?? 0;
       if (!byVolume.has(key)) byVolume.set(key, []);
       byVolume.get(key).push(chapter);
     }
     if (volumeRows.length > 0) {
       return volumeRows.map((row) => ({ id: row.id, no: row.no, name: row.name, chapters: byVolume.get(row.id) ?? [] }));
     }
-    // 卷表还没建（只落了章纲）：退回按 volume_id 现推，卷号只能用序号
+    // 卷表还没建（只落了章纲）：退回按 volumeId 现推，卷号只能用序号
     return [...byVolume.entries()]
       .sort((a, b) => a[0] - b[0])
       .map(([key, list], index) => ({ id: key, no: index + 1, name: '', chapters: list }));
@@ -78,7 +78,7 @@ export default function Manuscript() {
         const chapterList = Array.isArray(items) ? items : [];
         setChapters(chapterList);
         setVolumeRows(Array.isArray(rows) ? rows : []);
-        setVolumeId(chapterList[0]?.volume_id ?? null);
+        setVolumeId(chapterList[0]?.volumeId ?? null);
         setChapterId(chapterList[0]?.id ?? null);
       })
       .finally(() => { if (active) setLoaded(true); });

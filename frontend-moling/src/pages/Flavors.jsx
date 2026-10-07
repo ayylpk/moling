@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import AskModal from '../components/AskModal.jsx';
 import BlockTitle from '../components/BlockTitle.jsx';
 import { api } from '../api/client.js';
 
@@ -105,6 +106,16 @@ export default function Flavors() {
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  /**
+   * 正在问的事：{ kind: 'rename' | 'remove', dimension, name, value? }，null = 没在问。
+   *
+   * **改 / 删都不用 `window.confirm` 和 `window.prompt`** —— 它们在嵌入式预览与
+   * 各家 WebView 里会被静默吞掉，表现就是"点了改名/删除毫无反应"。
+   * 见 `components/AskModal.jsx`。
+   */
+  const [asking, setAsking] = useState(null);
+  const [askBusy, setAskBusy] = useState(false);
+  const [askError, setAskError] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -200,31 +211,42 @@ export default function Flavors() {
     }
   };
 
-  const rename = async (dimension, name) => {
-    const next = window.prompt(`把「${name}」改成：`, name)?.trim();
-    if (!next || next === name) return;
+  /** 点了"改名"：先摆输入框，确认了再发请求。名字没变就什么也不做（不发无谓的请求） */
+  const confirmRename = async () => {
+    const next = (asking?.value ?? '').trim();
+    if (!next || next === asking.name) { setAsking(null); return; }
+    setAskBusy(true);
+    setAskError('');
     setError('');
     setNotice('');
     try {
-      await api.updateFlavor(dimension, name, { name: next });
-      setNotice(`「${name}」已改名为「${next}」`);
+      await api.updateFlavor(asking.dimension, asking.name, { name: next });
+      setNotice(`「${asking.name}」已改名为「${next}」`);
+      setAsking(null);
       await load();
     } catch (cause) {
-      setError(cause.message || '改名失败');
+      // 失败时弹窗留着：改名失败往往是"重名了"，把原因摆在输入框边上才改得动
+      setAskError(cause.message || '改名失败');
+    } finally {
+      setAskBusy(false);
     }
   };
 
-  const remove = async (dimension, name) => {
-    const ok = window.confirm(`删除「${dimension}／${name}」？\n\n它不会被真删掉，只是挪进项目里的隔离区（.workbuddy/flavor-trash），随时能搬回来。`);
-    if (!ok) return;
+  /** 点了"删除"：先确认。**删除不真删** —— 挪进隔离区，随时能搬回 */
+  const confirmRemove = async () => {
+    setAskBusy(true);
+    setAskError('');
     setError('');
     setNotice('');
     try {
-      const result = await api.removeFlavor(dimension, name);
-      setNotice(`已删除「${name}」（挪到了隔离区，没真删）\n${result.movedTo || ''}`);
+      const result = await api.removeFlavor(asking.dimension, asking.name);
+      setNotice(`已删除「${asking.name}」（挪到了隔离区，没真删）\n${result.movedTo || ''}`);
+      setAsking(null);
       await load();
     } catch (cause) {
-      setError(cause.message || '删除失败');
+      setAskError(cause.message || '删除失败');
+    } finally {
+      setAskBusy(false);
     }
   };
 
@@ -232,10 +254,10 @@ export default function Flavors() {
 
   return (
     <main className="wb-page enter">
-      <BlockTitle mark="类" name="题材库" />
+      <BlockTitle mark="类" name="题材文风" />
 
       <p className="anno" style={{ lineHeight: 2 }}>
-        这里的类型与文风是全局共享的：建书表单的下拉、以及每章注入给写手和润色 agent 的片段，都取自这两个目录。
+        这里的类型与文风是全局共享的：建书表单里的选项、以及每章注入给写手和润色 agent 的片段，都取自这两个目录。
         加一个类型 = 加一个目录 + 几个片段文件，代码不用动。
       </p>
 
@@ -366,14 +388,53 @@ export default function Flavors() {
               ) : (
                 <div className="chip-row" style={{ marginTop: 10 }}>
                   <span className="chip" onClick={() => startEdit(tab, item.name)}>编辑</span>
-                  <span className="chip" onClick={() => rename(tab, item.name)}>重命名</span>
-                  <span className="chip chip--forbid" onClick={() => remove(tab, item.name)}>删除</span>
+                  <span className="chip" onClick={() => { setAskError(''); setAsking({ kind: 'rename', dimension: tab, name: item.name, value: item.name }); }}>重命名</span>
+                  <span className="chip chip--forbid" onClick={() => { setAskError(''); setAsking({ kind: 'remove', dimension: tab, name: item.name }); }}>删除</span>
                 </div>
               )}
             </article>
           ))}
         </div>
       </section>
+
+      {asking?.kind === 'rename' && (
+        <AskModal
+          eyebrow="RENAME"
+          title={`把「${asking.name}」改成什么？`}
+          note={`目录名会跟着改，${asking.dimension} 片段一起搬过去。原来的名字随即失效。`}
+          input={{
+            label: `${asking.dimension}名字`,
+            value: asking.value,
+            placeholder: '2~6 个汉字，不含标点',
+            onChange: (next) => setAsking((current) => ({ ...current, value: next })),
+          }}
+          confirmLabel="改名"
+          busy={askBusy}
+          error={askError}
+          onCancel={() => { setAsking(null); setAskError(''); }}
+          onConfirm={confirmRename}
+        />
+      )}
+
+      {asking?.kind === 'remove' && (
+        <AskModal
+          eyebrow="REMOVE"
+          title={`删除「${asking.dimension}／${asking.name}」？`}
+          note={
+            <>
+              不会被真删掉，只是挪进项目里的 <code>.workbuddy/flavor-trash/</code> —— 随时能搬回来。
+              <br />
+              但<strong>引用它的书不会被改</strong>：那本书的题材/文风字段还写着这个名字，只是从今往后不再有片段注入。
+            </>
+          }
+          confirmLabel="删除"
+          danger
+          busy={askBusy}
+          error={askError}
+          onCancel={() => { setAsking(null); setAskError(''); }}
+          onConfirm={confirmRemove}
+        />
+      )}
     </main>
   );
 }

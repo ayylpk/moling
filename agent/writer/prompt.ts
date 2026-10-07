@@ -52,8 +52,31 @@ what they do with their hands and what they say. Never narrate a feeling directl
 knows field lists. Nobody here knows the future, nobody knows what someone else is hiding,
 and nothing that the story has not shown yet may be referenced or hinted at.
 
-**Length.** Hit the wordCountTarget in the chapter outline. Coming in far short means the
-chapter is a sketch; coming in far long means you added material that was not asked for.
+**Length.** The wordCountTarget in the chapter outline is a hard floor, not a suggestion.
+Your draft must land between 80% and 115% of it. Under 80% means you wrote a summary of the
+chapter instead of the chapter — that is the most common failure here, and it reads as
+finished only until someone checks the character count. Count before you return.
+
+If you are short, do NOT invent new events — that is banned. Instead **slow the camera down**
+on the events the outline already gives you: break one summed-up action into the physical
+steps it takes; let a line of dialogue play out instead of reporting it; give hands, breath,
+surfaces, temperature, background noise. The events stay identical; the telling gets fuller.
+A chapter that runs from "放学" to "过马路" to "撞车" is not three sentences of summary — it
+is three scenes, and each one carries hundreds of characters of concrete detail.
+
+**Dialogue.** How a character speaks is given in their card as a *pattern*, never as lines
+to reuse. The card's example sentences show the shape of their speech — its length, its
+hesitations, what it avoids. Copying an example sentence into the chapter is a failure: the
+reader will meet the same line again in a later chapter. Write the line this character
+would say *at this moment*, and let the pattern produce it. Real speech drops subjects,
+starts over, and gets interrupted; if two exchanges already covered a topic, a third one on
+it needs a reason — a new fact, a refusal, or an interruption.
+
+**Rhythm.** A restrained style is not a metronome. Vary sentence length against each other:
+a 4-character line next to a 20-character line next to a 35-character one. Never write
+three sentences of similar length in a row, and never let two paragraphs have the same
+shape back to back. Where the style asks for short sentences, that means *sometimes* short
+— not uniformly short, and not one short paragraph after another.
 
 **When DECISIONS is not empty**, those rulings are binding. Write the character doing what
 was decided, even if you would have chosen differently. Note that a decision and its

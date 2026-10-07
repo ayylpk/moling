@@ -335,6 +335,7 @@
   display: flex; align-items: center; gap: 10px; margin-top: 6px;
   font-family: var(--f-display); font-size: 22px; font-weight: 400; color: var(--m-ink);
 }
+.conversation__head-actions { display: flex; gap: 6px; flex: none; }
 .conversation__collapse {
   border: 1px solid var(--m-line); border-radius: var(--radius-fine);
   padding: 7px 10px; background: var(--m-paper); color: var(--m-ink-2);
@@ -390,6 +391,8 @@
 .ws__chat {
   grid-column: 2;
   grid-row: 2;
+  /* 相对定位：那条可拖拽的边要以本栏为基准（面板自身没定位，absolute 会跑到整页去） */
+  position: relative;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -407,6 +410,22 @@
 .ws__chat .conversation__composer textarea { flex: 1; min-height: 40px; }
 .ws__chat .conversation__composer .btn { flex: none; justify-content: center; margin: 0; }
 .ws__chat .conversation__composer textarea:focus-visible { outline: 1px solid var(--m-indigo); outline-offset: -1px; }
+
+/* ── 放大态：盖在画布上的宽窗，读长回复用 ──
+   用覆盖而不是把栅格拉宽：拉宽栅格会把画布挤成一条缝，反而看不了。
+   顶栏 54px 让出来，其余盖住。 */
+.ws__chat.is-max {
+  position: fixed;
+  top: 54px;
+  right: 0;
+  bottom: 0;
+  width: min(94vw, 920px);
+  z-index: 50;
+  box-shadow: -20px 0 46px rgba(0, 0, 0, 0.4);
+  border-left: 1px solid var(--ws-line);
+}
+.ws__chat.is-max .conversation__messages { padding: 22px 8%; }
+.ws__chat.is-max .conversation__message p { font-size: 15px; line-height: 2; }
 
 /* 栏内自己的「灵」印（v0.4 的 chat-rail 遗名作废，归 conversation 词汇表） */
 .conversation__seal {

@@ -100,7 +100,17 @@ silent, use 50.
   needs someone who does not exist yet, write 'NEW:' followed by the dramatic function the
   story needs — for example: NEW:一个在第三章向主角泄露内情的线人. The cast agent builds it
   later, and the central agent resolves it. Do not name that person.
-- wordCountTarget — one number, not a range.
+- summary — **the beats of this chapter, in order. This is the writer's main input, and the
+  most under-specified field in a bad outline.** A beat is one event step: a scene turn, a
+  decision, a discovery, an exchange that changes something. List them in order, one clause
+  per beat (例：一前一后过马路 → 货车右转没减速 → 他推她 → 她反手抓他袖子 → 他被带进车道)。
+  A summary that is one thematic sentence ('两人关系出现裂痕') gives the writer nothing to
+  expand — the chapter comes back as a sketch no matter what the word count says. A chapter
+  targeting ~2500 characters needs 4–6 beats, at roughly 400–500 characters per beat.
+- wordCountTarget — one number, not a range. If NEED specifies a per-chapter length, use that.
+  Otherwise the number must be justified by the beats you listed in summary: roughly 400–500
+  characters per beat. A 2500-character chapter carried by two beats is a target the writer
+  cannot hit — add beats to summary, or lower the number.
 
 === HARD BANS ===
 - No character outside CAST and PREVIOUS. No new place names. No forbidden-list violations.

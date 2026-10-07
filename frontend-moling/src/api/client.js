@@ -24,8 +24,23 @@ export const api = {
   /** 目录库里的全部小说（title/genre/style/description/logline/target_words/themes/status） */
   listNovels: () => request('/api/novels'),
   getNovel: (id) => request(`/api/novels/${id}`),
+  /**
+   * 从书架移除一本书。
+   *
+   * **书稿文件不会被真删** —— 目录挪进 `.workbuddy/novel-trash/`，只有目录库那一行被删。
+   * 所以返回体里有 `movedTo`；恢复要两步（把目录搬回去 + 重新建同 slug 的书），
+   * 页面上的确认框要把这件事说清楚，不能只说"可以恢复"。
+   */
+  removeNovel: (id) => request(`/api/novels/${id}`, { method: 'DELETE' }),
   /** 建书。返回体除小说本身，还带 flavorHints：风格名拼错时给出正确候选（null 表示没问题） */
   createNovel: (novel) => request('/api/novels', { method: 'POST', body: JSON.stringify(novel) }),
+  /**
+   * 改一本**已建好**的书的题材与文风（`PUT`，给了的字段覆盖、没给的保持原样）。
+   *
+   * 只影响**往后**生成的章节 —— 片段是生成那一刻注入的，已经落盘的正文不会被改写。
+   * 返回体同样带 `flavorHints`（和建书一致）。
+   */
+  updateNovelFlavors: (id, patch) => request(`/api/novels/${id}`, { method: 'PUT', body: JSON.stringify(patch) }),
 
   /* ==================== 建书可选维度 ==================== */
   /**

@@ -12,6 +12,7 @@ export {
   createSAgent,
   sAgent,
   CONTEXT_BUDGET,
+  SAGENT_RECURSION_LIMIT,
   estimateTokens,
   chapterArtifactCompaction,
 } from "./agent"

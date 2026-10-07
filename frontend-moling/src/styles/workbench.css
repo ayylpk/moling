@@ -150,14 +150,65 @@
 }
 
 .wb__novel-select { display: flex; align-items: baseline; gap: 8px; white-space: nowrap; }
-.wb__novel-select select {
+
+/* 当前小说切换器（自绘下拉，替掉原生 select） */
+.novel-switch { position: relative; }
+.novel-switch__trigger {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 9px;
+  max-width: 42ch;
+  padding: 4px 2px;
   border: 0;
-  background: transparent;
+  background: none;
   color: var(--m-ink);
   font-family: var(--f-display);
   font-size: 21px;
+  line-height: 1.3;
   cursor: pointer;
 }
+.novel-switch__title { overflow: hidden; text-overflow: ellipsis; }
+.novel-switch__trigger:hover .novel-switch__title, .novel-switch__trigger.is-open .novel-switch__title {
+  border-bottom: 1px solid var(--m-ink-3);
+}
+.novel-switch__trigger:disabled { color: var(--m-ink-3); cursor: default; font-size: 17px; }
+.novel-switch__genre { color: var(--m-ink-3); font-family: var(--f-ui); font-size: 12px; letter-spacing: .06em; }
+.novel-switch__caret { color: var(--m-ink-3); font-size: 11px; }
+.novel-switch__list {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 8px);
+  left: 0;
+  min-width: 260px;
+  max-height: 330px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  background: var(--m-paper);
+  border: 1px solid var(--m-line);
+  border-radius: var(--radius-fine);
+  box-shadow: 0 16px 34px rgba(25, 23, 18, .16);
+}
+.novel-switch__list button {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--radius-fine);
+  background: none;
+  color: var(--m-ink-2);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+.novel-switch__list button:hover { background: var(--m-paper-2); color: var(--m-ink); }
+.novel-switch__list button.is-active { color: var(--m-cinnabar); background: rgba(181, 56, 44, .06); }
+.novel-switch__opt-title { font-family: var(--f-display); font-size: 15px; }
+.novel-switch__opt-meta { color: var(--m-ink-3); font-size: 12px; }
 .wb__top-label, .spec-picker__label { font-size: 14px; color: var(--m-ink-3); letter-spacing: 0.08em; }
 .wb__top-toggle { border: 0; background: transparent; color: var(--m-indigo); padding: 10px 0; font-size: 14px; cursor: pointer; }
 .wb__top__spacer { flex: 1; }
@@ -183,6 +234,23 @@
 /* 规格选中 = 朱砂描边浅印（激活职），自定义 = 花青（链接职） */
 .spec-picker__options button.is-selected { color: var(--m-cinnabar); border-color: var(--m-cinnabar); background: rgba(181, 56, 44, 0.06); }
 .spec-picker__options button.is-custom { color: var(--m-indigo); border-color: var(--m-indigo); }
+
+/* 建书弹窗里的「自定」输入。选择器要比 `.novel-form__field input` 更具体，
+   否则会被那一条的 width:100% / 实底背景盖掉，长得跟正文输入框一样 */
+.novel-form__field .flavor-picker__custom {
+  flex: 1 1 170px;
+  min-width: 150px;
+  width: auto;
+  min-height: 34px;
+  padding: 5px 12px;
+  font-size: 14px;
+  border: 1px dashed var(--m-line);
+  border-radius: var(--radius-fine);
+  background: transparent;
+  color: var(--m-ink-2);
+}
+.novel-form__field .flavor-picker__custom::placeholder { color: var(--m-ink-3); }
+.novel-form__field .flavor-picker__custom.is-active { border-style: solid; border-color: var(--m-indigo); color: var(--m-ink); background: var(--m-paper); }
 
 /* ---------- 内容区：旧宣案面（卡片亮在其上） ---------- */
 .wb__main {
@@ -248,6 +316,15 @@
   border-color: var(--m-cinnabar-deep);
 }
 
+/* 破坏性动作（删除 / 移除）。朱砂描边而不是填实：
+   主按钮一页至多一枚，而"确认删除"多数时候在弹窗里，不该跟页面的主动作抢重量 */
+.btn--danger {
+  color: var(--m-cinnabar);
+  border-color: var(--m-cinnabar);
+  background: transparent;
+}
+.btn--danger:hover:not(:disabled) { background: rgba(181, 56, 44, .08); color: var(--m-cinnabar-deep); border-color: var(--m-cinnabar-deep); }
+
 .btn--sm {
   padding: 4px 12px;
   font-size: 12.5px;
@@ -271,6 +348,19 @@
   border-style: dashed;
   color: var(--m-ink-3);
 }
+
+/* 卡片上的题材/文风 chip 可点开"改题材与文风"。它是 <button>，
+   所以要显式继承字体 —— button 默认不吃 body 的 font-family */
+.chip--edit {
+  font-family: inherit;
+  cursor: pointer;
+}
+.chip--edit:hover { border-color: var(--m-ink-3); color: var(--m-ink); background: var(--m-paper-2); }
+/* 还没定 = 一条待办，不是普通词条。朱砂描边让它一眼就是"该点的地方" */
+.chip.is-blank { border-style: dashed; border-color: var(--m-cinnabar); color: var(--m-cinnabar); background: rgba(181, 56, 44, .05); }
+.chip--edit.is-blank:hover { background: rgba(181, 56, 44, .12); color: var(--m-cinnabar-deep); }
+/* 「这个名字库里没有」的那句提示，落在卡片上（弹窗一关就没了的提示等于没有） */
+.book__notice { margin: 10px 0 0; color: var(--m-ink-3); font-size: 12px; line-height: 1.7; }
 
 .chip-row {
   display: flex;
@@ -330,13 +420,22 @@
 .novel-modal__shade {
   position: fixed;
   inset: 0;
-  z-index: 30;
-  display: grid;
-  place-items: center;
+  /* 要压过顶栏(sticky, 10)和小说下拉(40)。**同时弹窗本身由 `Modal` portal 到 body**，
+     否则祖先的 transform（页面出场动画 `.enter`）会把 fixed 的基准从视口改成那个祖先，
+     弹窗就按内容区居中了 —— 见 components/Modal.jsx */
+  z-index: 60;
+  display: flex;
   padding: 24px;
-  background: rgba(25, 23, 18, 0.58);
+  /* 内容比视口高时让**遮罩**滚。用 `place-items: center` 的话会把顶部顶到屏幕外且滚不到 */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* 玄墨罩。原来 0.58 太重，整页压成黑的，弹窗反而没了层次（token 里禁毛玻璃，
+     所以只能靠透明度调，不能上 backdrop-filter） */
+  background: rgba(25, 23, 18, 0.22);
 }
 .novel-modal {
+  /* margin:auto 同时管横竖居中，且内容超高时不会把顶部顶出去 */
+  margin: auto;
   width: min(650px, 100%);
   max-height: min(760px, calc(100vh - 48px));
   overflow: auto;
@@ -346,6 +445,8 @@
   box-shadow: 0 16px 50px rgba(25, 23, 18, 0.24);
 }
 .novel-modal__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 12px; }
+/* 改题材与文风只有两组选项，用不着建书那张大纸 */
+.novel-modal--slim { width: min(560px, 100%); }
 .novel-modal h2 { margin: 4px 0 0; font-family: var(--f-display); font-size: 28px; font-weight: 400; color: var(--m-ink); }
 .novel-modal__close { border: 0; background: none; color: var(--m-ink-3); font-size: 28px; line-height: 1; cursor: pointer; }
 .novel-modal__close:hover { color: var(--m-cinnabar); }
@@ -456,6 +557,20 @@
   justify-content: space-between;
   gap: 12px;
 }
+
+/* 状态字与移除按钮**要成一组靠右**：.book__head 是 space-between，
+   多加一个直接子元素会把状态字挤到正中间去 */
+.book__right { display: flex; align-items: baseline; gap: 10px; }
+.book__remove {
+  border: 0;
+  background: none;
+  padding: 0 2px;
+  color: var(--m-ink-3);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+}
+.book__remove:hover { color: var(--m-cinnabar); }
 
 .book__title {
   font-family: var(--f-display);

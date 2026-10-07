@@ -48,4 +48,5 @@ resources/checkpoints/
 
 # 前端验证截图与构建产物（本地证据，不入库）
 frontend-moling/.shots/
-frontend-moling/.build-check/
+# 通配：`vite build` 在本机会撞 safe-delete（清不了旧目录），所以每次换个新目录名构建
+frontend-moling/.build-*/

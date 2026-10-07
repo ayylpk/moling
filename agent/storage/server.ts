@@ -17,7 +17,7 @@ import {
   type CharacterPatch,
   type LocationInput,
 } from '../my-app'
-import { createSAgent } from '../SAgent'
+import { createSAgent, SAGENT_RECURSION_LIMIT } from '../SAgent'
 
 /**
  * HTTP 传输层 —— **只做传输**。
@@ -36,7 +36,18 @@ const notFound = (message: string) => ({ __notFound: message })
 const isNotFound = (value: unknown): value is { __notFound: string } =>
   typeof value === 'object' && value !== null && '__notFound' in value
 
-const json = (body: unknown, status = 200): Response => Response.json(body, { status, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type', 'Access-Control-Allow-Methods': 'GET,POST,PUT,OPTIONS' } })
+/**
+ * 跨域头。**允许的方法只在这里列一次** —— 之前它在这份文件里手抄了两遍，
+ * 于是加 DELETE 的时候只改了路由、没改这里，表现就是"前端删不掉"，
+ * 而浏览器给出的原因看不出是方法没被允许。
+ */
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
+}
+
+const json = (body: unknown, status = 200): Response => Response.json(body, { status, headers: CORS_HEADERS })
 const bad = (message: string, status = 400) => json({ message }, status)
 
 /** 视觉接口收哪些图片格式 —— 与百炼支持的 Content Type 对齐 */
@@ -137,7 +148,7 @@ const chatAgents = new Map<number, ReturnType<typeof createSAgent>>()
 const server = Bun.serve({
   port: 3000,
   async fetch(request) {
-    if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type', 'Access-Control-Allow-Methods': 'GET,POST,PUT,OPTIONS' } })
+    if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS })
     const url = new URL(request.url)
     const parts = url.pathname.split('/').filter(Boolean).map(decodeSegment)
     const novelPath = parts[0] === 'api' && parts[1] === 'novels' && parts[2] !== undefined
@@ -237,6 +248,26 @@ const server = Bun.serve({
         const novel = catalog.getNovel(novelIdOf(parts[2]))
         return novel ? json(novel) : bad('小说不存在', 404)
       }
+      // 改已建好那本书的题材与文风。只动目录库这一行；`genre`/`style` 全项目只存这里，
+      // 生成时才读出来拼进提示词，所以改完对**往后**的章节立刻生效，已落盘的正文不受影响。
+      // 与建书一样把「你是不是想写这个」带回去（拼错目录名不会报错，只是那一段永不注入）。
+      if (novelPath && !parts[3] && request.method === 'PUT') {
+        const body = await request.json() as { genre?: string; style?: string }
+        const updated = catalog.updateNovelFlavors(novelIdOf(parts[2]), body)
+        const flavor = catalog.checkFlavorNames(updated)
+        return json({
+          ...updated,
+          flavorHints: {
+            style: flavor.style.ok ? null : flavor.style.known,
+            genre: flavor.genre.ok ? null : flavor.genre.known,
+          },
+        })
+      }
+      // 从书架移除。**只有目录库那一行被删，书稿文件挪进了隔离区**，
+      // 所以返回体里带回 movedTo —— 前端要如实告诉用户"能捞回来，但要多两步"
+      if (novelPath && !parts[3] && request.method === 'DELETE') {
+        return json(catalog.removeNovel(novelIdOf(parts[2])))
+      }
 
       /* ==================== 世界观 ==================== */
       if (novelPath && parts[3] === 'worlds') {
@@ -319,11 +350,11 @@ const server = Bun.serve({
         return new Response(result.content, {
           status: 200,
           headers: {
+            ...CORS_HEADERS,
             'Content-Type': 'text/plain; charset=utf-8',
             // 中文名必须走 filename*（RFC 5987）：只给 filename= 到了浏览器里是乱码，
             // 而乱码文件名在 Windows 上可能根本存不下来
             'Content-Disposition': `attachment; filename="novel.txt"; filename*=UTF-8''${encodeURIComponent(filename)}`,
-            'Access-Control-Allow-Origin': '*',
             // 前端要靠这个头给文件命名，得先允许它被读到
             'Access-Control-Expose-Headers': 'Content-Disposition',
           },
@@ -437,7 +468,8 @@ const server = Bun.serve({
         chatAgents.set(novelId, agent)
         const result = await agent.invoke(
           { novelId, slug: novel.slug, messages: [...history, { role: 'user', content: body.message.trim() }] },
-          { configurable: { novelId } },
+          // recursionLimit 必须显式给，不能吃 LangGraph 的默认 25 —— 详见 SAgent/agent.ts
+          { recursionLimit: SAGENT_RECURSION_LIMIT, configurable: { novelId } },
         )
         const messages = (result as { messages?: Array<{ getType?: () => string; content?: unknown }> }).messages ?? []
         const answer = [...messages].reverse().find((item) => item.getType?.() === 'ai' || typeof item.content === 'string')?.content
@@ -450,6 +482,20 @@ const server = Bun.serve({
       // db 层入参校验一律抛 TypeError —— 那是 400（请求不对），不是 500（服务器炸了）
       if (error instanceof TypeError) return bad(message, 400)
       if (/^小说不存在/.test(message)) return bad(message, 404)
+      /*
+       * 步数上限不是"服务器炸了"，是"这一轮要求它做的事太多"。
+       * LangGraph 原样抛的是英文 `Recursion limit ... reached` 再加一个 docs 链接，
+       * 作者看到等于没看到。换成一句人话，并明确告诉他**已经落库的东西没丢** ——
+       * 每次工具调用是独立开库落库再关库的，所以重发一条指令就能接着往下做。
+       */
+      if (/recursion limit/i.test(message)) {
+        return bad(
+          `这一轮超过了单次上限（${SAGENT_RECURSION_LIMIT} 步），已经停下。`
+          + '**已经写进库的内容不会丢**，直接重发一条指令，它会从当前进度接着做。'
+          + '想看它到哪了，去执笔模式的画布看那六盏灯。',
+          400,
+        )
+      }
       return bad(message, 500)
     }
   },

@@ -22,6 +22,7 @@
  * ③ createNovelSystem() —— 把 SAgent + 状态 + checkpointer 接起来
  */
 import path from "node:path"
+import fs from "node:fs"
 import { Database } from "bun:sqlite"
 import {
   BaseCheckpointSaver,
@@ -38,7 +39,7 @@ import {
 } from "@langchain/langgraph-checkpoint"
 import type { RunnableConfig } from "@langchain/core/runnables"
 
-import { createSAgent, INITIAL_NOVEL_STATE } from "./SAgent"
+import { createSAgent, INITIAL_NOVEL_STATE, SAGENT_RECURSION_LIMIT } from "./SAgent"
 
 /* ==================== 路径 ==================== */
 
@@ -362,6 +363,10 @@ export interface NovelSystemOptions {
  * 历史会自动续上（这就是"记忆共享在中心 agent"）。
  */
 export function createNovelSystem(options: NovelSystemOptions) {
+  // 目录得先建出来：`new Database(path, { create: true })` 只建**文件**不建父目录，
+  // 父目录不在就抛 SQLITE_CANTOPEN —— 新克隆的仓库里 resources/checkpoints/ 是没有的，
+  // 于是 `bun agent/run.ts <slug>` 会在第一行就炸（而报错看起来像数据库坏了）
+  fs.mkdirSync(CHECKPOINT_DIR, { recursive: true })
   const saver = new SqliteCheckpointSaver(checkpointPathFor(options.slug))
   const agent = createSAgent()
   const threadId = threadIdFor(options.slug)
@@ -371,7 +376,15 @@ export function createNovelSystem(options: NovelSystemOptions) {
     saver,
     threadId,
     /** 每次 invoke 都带上它，SAgent 的工具靠它知道在写哪本 */
+    /**
+     * 每次 invoke 都带上它，SAgent 的工具靠它知道在写哪本。
+     *
+     * `recursionLimit` 必须显式给：LangGraph 默认 25 是给"一问一答"的 ReAct 用的，
+     * 中心 agent 一轮要连调若干子 agent 再落库（**一次工具调用算两步**），25 步不够 ——
+     * 见 `SAgent/agent.ts` 里 `SAGENT_RECURSION_LIMIT` 的说明。
+     */
     config: {
+      recursionLimit: SAGENT_RECURSION_LIMIT,
       configurable: { thread_id: threadId, novelId: options.novelId },
     },
     /**

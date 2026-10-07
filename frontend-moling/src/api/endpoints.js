@@ -32,7 +32,7 @@ export const API = {
    * **它不拦建书** —— 提示而已，拦下来是替作者做主。
    */
   createNovel: '/api/novels',
-  /** GET /api/novels/:id */
+  /** GET /api/novels/:id —— 也是 PUT（改题材/文风，body: {genre?,style?}，没给的保持原样） */
   novel: (id) => `/api/novels/${id}`,
 
   /* ==================== 类型与文风库 ==================== */

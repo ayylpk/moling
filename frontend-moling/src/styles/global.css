@@ -227,6 +227,47 @@ body::before {
   .swatch__chip { height: 140px; }
 }
 
+/* ---------- 可拖拽的侧栏边（文库左栏 / 执笔对话栏共用） ----------
+   命中区跨过栏间的界行约 5px：光标落在缝里才算"抓住了"，
+   差这几像素就会变成"点了没反应"。 */
+.resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  z-index: 6;
+  cursor: col-resize;
+  touch-action: none; /* 触屏上否则会变成上下滚动 */
+}
+.resize-handle::after {
+  content: '';
+  position: absolute;
+  inset: 0 4px;
+  background: transparent;
+  transition: background 0.15s ease;
+}
+.resize-handle:hover::after,
+.resize-handle:focus-visible::after { background: var(--m-line); }
+.resize-handle:focus-visible { outline: none; }
+
+/* 拖的过程中：整页别选中文本，光标别跳回箭头 */
+body.is-resizing,
+body.is-resizing * { cursor: col-resize !important; }
+body.is-resizing { user-select: none; }
+
+/* ---------- 长文本不许把容器撑破 ----------
+   "超线"多半是它：报错原文、文档链接、长英文串没有断行点，
+   中文能自动折，这些不能 —— 不加就会顶出卡片边框。 */
+.anno,
+.field__v,
+.book__notice,
+.conversation__message p,
+.conversation__context,
+.novel-form__error,
+.novel-form__note {
+  overflow-wrap: anywhere;
+}
+
 /* ---------- 减少动态 ---------- */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

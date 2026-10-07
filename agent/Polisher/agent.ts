@@ -2,7 +2,7 @@ import { createAgent } from "langchain"
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models"
 import { createModel } from "../create_model"
 import * as z from "zod"
-import { POLISHER_PROMPT } from "./prompt"
+import { POLISHER_PROMPT, POLISHER_RHYTHM_PROMPT } from "./prompt"
 import { composePrompt, type Flavor } from "../skills"
 import { NO_AI_VOICE } from "../skills"
 
@@ -32,10 +32,24 @@ export const PolishedTextSchema = z.object({
 
 export type PolishedText = z.output<typeof PolishedTextSchema>
 
-export function createPolisherAgent(model: BaseChatModel = createModel(0.3), flavor: Flavor = {}) {
+/**
+ * @param options.mode  默认 'sweep'（清扫遍，原行为）；
+ *                      'rhythm' = 第二遍（节奏与对白），换一份立场相反的系统提示。
+ *
+ * ── 为什么要两份系统提示 ──
+ * 清扫遍的自检一大半在说"别扭就放着别动""短句是节奏别合并"，那是防它乱改的；
+ * 节奏遍的活**就是**合并碎段、破等长、拆回声。同一份提示下，那些守则会把
+ * 节奏遍的活整个压死（实测两次润色改写率 6% 和 9%，模型自称"没有可改的"）。
+ */
+export function createPolisherAgent(
+  model: BaseChatModel = createModel(0.3),
+  flavor: Flavor = {},
+  options: { mode?: 'sweep' | 'rhythm' } = {},
+) {
+  const core = options.mode === 'rhythm' ? POLISHER_RHYTHM_PROMPT : POLISHER_PROMPT
   return createAgent({
     model,
-    systemPrompt: composePrompt(POLISHER_PROMPT, 'polisher', flavor.style, flavor.genre, NO_AI_VOICE),
+    systemPrompt: composePrompt(core, 'polisher', flavor.style, flavor.genre, NO_AI_VOICE),
     responseFormat: PolishedTextSchema,
     name: "ProsePolisherAgent",
     description:

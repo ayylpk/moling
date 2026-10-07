@@ -28,6 +28,10 @@ const ARCHITECT_SKILL_CORE = `
    也不许锯齿乱跳：整体必须往上爬。
 10. **在某一卷里硬塞满六种转折点** → 不合格。六种类型分散在全篇，
     一卷通常只有一到两个；这卷没有 midpoint 就不要写 midpoint。
+11. **summary 只有一两句话，而 wordCountTarget ≥ 2000** → 不合格。
+    summary 是写手扩写的唯一蓝本：**summary 里数得出的节拍数 × 450 字 ≈ 这章实际写得出的字数**。
+    节拍撑不起目标，写手就只能交一份概要——提示词怎么催都没用，因为它被禁止新增事件。
+    修法：把本章按顺序拆成 4–6 个节拍写进 summary，或者把目标字数降下来。
 
 === 常见崩法（认出自己正在崩就停手）===
 
@@ -39,6 +43,9 @@ const ARCHITECT_SKILL_CORE = `
   外部阻拦、信息缺失、他自己的选择、代价太高、时间不够。
 - **卷末什么都没解决**：把「没解决」当成了钩子。钩子是**新的问题被打开**，
   不是**旧的问题没关**。本卷主要驱动力必须在末章前转到明确的转折点。
+- **summary 写成了主题句**：「这一章两人关系出现裂痕」——这是**评价**，不是**节拍**。
+  写手拿着它只能写出一段感悟。每章 summary 要按顺序列出 4–6 个事件步，
+  每一步一个短句：谁做了什么、发生了什么变化。
 
 === 交付前自检 ===
 
@@ -52,6 +59,7 @@ const ARCHITECT_SKILL_CORE = `
 - [ ] 本卷末章的钩子是「打开了新问题」还是「什么都没解决」？
 - [ ] constraints.locations 里有没有 CAST / WORLD 之外的地名？
 - [ ] chapters 里的 characters / place，除 \`NEW:\` 前缀外，是否全部已登记？
+- [ ] 抽三章数一数：summary 里的节拍数 × 450 ≈ wordCountTarget 吗？差得远就是节拍不足。
 `.trim();
 
 export const ARCHITECT_SKILL = [ARCHITECT_SKILL_CORE, NO_AI_VOICE].join("\n\n");
