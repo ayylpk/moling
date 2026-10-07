@@ -121,6 +121,18 @@ export type ChapterText = {
   endsWith: string
   polishReport: unknown
 }
+/**
+ * 导出用的一行：一章的章号、标题，以及两个阶段各自的正文（可能没有）。
+ * 用哪个是上层的事 —— 见 `listTextsForExport`。
+ */
+export type ChapterExportRow = {
+  id: number
+  idx: number
+  title: string
+  finalText: string | null
+  draftText: string | null
+}
+
 export type GenerationTask = {
   id: number
   stage: ChapterStage
@@ -476,6 +488,36 @@ export const createChapterRuntime = (database: Database) => {
       return row ? {
         id: Number(row.id), chapterId: Number(row.chapter_id), stage: row.stage as TextStage, text: String(row.text), summary: String(row.summary), endsWith: String(row.ends_with), polishReport: JSON.parse(String(row.polish_report || '[]')),
       } : null
+    },
+    /**
+     * 批量取若干章的正文（导出用）。**一条 SQL 查完，不按章循环** ——
+     * 一本三百章的书逐章取要开三百次查询，而导出本来就是一次性的只读操作。
+     *
+     * 两个阶段都带回来，用哪个交给上层：`终稿优先、缺则退初稿` 是业务规则，
+     * 不属于 db 层。**按 idx 排序** —— 章号全篇连续不从 1 重开，所以这个顺序就是全书顺序。
+     */
+    listTextsForExport(chapterIds: number[]): ChapterExportRow[] {
+      if (chapterIds.length === 0) return []
+      const placeholders = chapterIds.map(() => '?').join(',')
+      const rows = database
+        .query(
+          `SELECT c.id AS id, c.idx AS idx, c.title AS title,
+                  (SELECT t.text FROM chapter_texts t WHERE t.chapter_id = c.id AND t.stage = 'final') AS final_text,
+                  (SELECT t.text FROM chapter_texts t WHERE t.chapter_id = c.id AND t.stage = 'draft') AS draft_text
+             FROM chapters c
+            WHERE c.id IN (${placeholders})
+            ORDER BY c.idx`,
+        )
+        .all(...chapterIds) as Array<Record<string, unknown>>
+
+      const asText = (value: unknown): string | null => (typeof value === 'string' ? value : null)
+      return rows.map((row) => ({
+        id: Number(row.id),
+        idx: Number(row.idx),
+        title: String(row.title),
+        finalText: asText(row.final_text),
+        draftText: asText(row.draft_text),
+      }))
     },
     saveText(chapterIdx: number, input: { stage: TextStage; text: string; summary?: string; endsWith?: string; polishReport?: unknown }): ChapterText {
       const chapter = this.getChapter(chapterIdx)

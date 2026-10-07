@@ -301,6 +301,35 @@ const server = Bun.serve({
         }
       }
 
+      /* ==================== 导出 ==================== */
+      // **单章与批量是同一个接口**：ids 里给一个就是单章，给多个就是批量。
+      // 返回的是文件本体（text/plain）而不是 JSON —— 所以只有出错时才回 JSON，
+      // 调用方必须先用 fetch 判 status，不能直接挂一个 <a href> 让它去下载。
+      if (novelPath && parts[3] === 'export' && request.method === 'GET') {
+        const novelId = novelIdOf(parts[2])
+        const ids = (url.searchParams.get('ids') ?? '')
+          .split(',')
+          .map((item) => Number(item.trim()))
+          .filter((value) => Number.isInteger(value) && value > 0)
+        if (ids.length === 0) return bad('缺少 ids：逗号分隔的 chapterId。给一个就是单章，给多个就是批量')
+
+        // 去重：同一个 chapterId 传两遍不该导出两遍
+        const result = chapterApi.exportChapters(novelId, catalog.getNovel(novelId)?.title ?? '', [...new Set(ids)])
+        const filename = `${result.filename}.txt`
+        return new Response(result.content, {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/plain; charset=utf-8',
+            // 中文名必须走 filename*（RFC 5987）：只给 filename= 到了浏览器里是乱码，
+            // 而乱码文件名在 Windows 上可能根本存不下来
+            'Content-Disposition': `attachment; filename="novel.txt"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+            'Access-Control-Allow-Origin': '*',
+            // 前端要靠这个头给文件命名，得先允许它被读到
+            'Access-Control-Expose-Headers': 'Content-Disposition',
+          },
+        })
+      }
+
       /* ==================== 章节 ==================== */
       if (novelPath && parts[3] === 'chapters') {
         const novelId = novelIdOf(parts[2])

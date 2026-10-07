@@ -17,6 +17,7 @@ import {
 import { rememberChapterOutline, rememberChapterText, saveChapterOutlinesWithMemory, type ChapterOutlineSaveReport } from '../service/entityService'
 import { listNovelsInCatalog, openNovelDatabase, slugOfNovel, type CatalogNovel } from '../db/connection'
 import { withNovel } from './withNovel'
+import { composeChapterTxt, type ComposedExport } from '../shared/chapterTxt'
 
 /**
  * 卷章 controller —— 一个动作一次调用。
@@ -71,6 +72,45 @@ export const getChapterText = (novelId: number, chapterIdx: number, stage: TextS
 /** 章节索引（剧情页 / 书稿页的列表）：章纲字段 + textStage */
 export const listChapterSummaries = (novelId: number) =>
   withNovel(novelId, (database) => createChapterRuntime(database).listChapterSummaries())
+
+/**
+ * 把若干章导出成一份 txt。**一章和一百章走的是同一条路** —— 传进来的就是一个 chapterId 列表。
+ *
+ * 取哪一版正文：**终稿优先，没有终稿才退初稿**；两个都没有则该章写明"尚无正文"。
+ * 用了初稿的章节会被写进文件开头的说明块 —— 不写的话，拿到 txt 的人会以为通篇都是定稿。
+ * 这条规则刻意**不做成参数**：一个"要初稿还是终稿"的开关，多数时候只是让人多点一下。
+ *
+ * 传进来的 id 里若有已经不存在的章（比如别处删过），**只导存在的那些**，
+ * 一个都不存在才报错 —— 为了一个过期的 id 让整次导出失败没有道理。
+ */
+export const exportChapters = (
+  novelId: number,
+  novelTitle: string,
+  chapterIds: number[],
+): ComposedExport & { chapterCount: number; draftCount: number; emptyCount: number } =>
+  withNovel(novelId, (database) => {
+    const rows = createChapterRuntime(database).listTextsForExport(chapterIds)
+    if (rows.length === 0) throw new TypeError('选中的章节都不在这本书里')
+
+    // 空字符串与只有空白都算"没有正文" —— 否则会导出一个标题下面空一行的章
+    const pick = (row: { finalText: string | null; draftText: string | null }) => {
+      const final = row.finalText?.trim() ? row.finalText : null
+      const draft = row.draftText?.trim() ? row.draftText : null
+      return { text: final ?? draft, stage: (final ? 'final' : draft ? 'draft' : null) as 'final' | 'draft' | null }
+    }
+
+    const composed = composeChapterTxt({
+      novelTitle,
+      chapters: rows.map((row) => ({ idx: row.idx, title: row.title, ...pick(row) })),
+    })
+
+    return {
+      ...composed,
+      chapterCount: rows.length,
+      draftCount: rows.filter((row) => pick(row).stage === 'draft').length,
+      emptyCount: rows.filter((row) => pick(row).stage === null).length,
+    }
+  })
 
 /** 改一条章纲。改完发记忆：不记的话，"改完这条章纲"在记忆里就不存在 */
 export const updateChapter = (novelId: number, id: number, patch: ChapterOutlinePatch): ChapterOutline | null =>
