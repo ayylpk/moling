@@ -101,6 +101,28 @@ export const api = {
   getChapterText: (novelId, chapterId, stage = 'draft') => request(`/api/chapters/${chapterId}/text?stage=${stage}&novelId=${novelId}`),
   saveChapterText: (novelId, chapterId, text, stage = 'draft') =>
     request(`/api/chapters/${chapterId}/text?stage=${stage}&novelId=${novelId}`, { method: 'PUT', body: JSON.stringify({ text }) }),
+  /**
+   * 导出正文为 txt。**单章与批量是同一个接口** —— ids 里给一个就是单章。
+   *
+   * 这里刻意不走 `request()`：它回来的是文件而不是 JSON，出错时后端才回 JSON。
+   * 所以必须自己判 status，不能把浏览器直接指到这个地址上 ——
+   * 那样一旦出错，浏览器会把一段错误 JSON 存成 .txt 给用户。
+   */
+  exportChapters: async (novelId, chapterIds) => {
+    const response = await fetch(`/api/novels/${novelId}/export?ids=${chapterIds.join(',')}`);
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null);
+      throw new Error(payload?.message || `导出失败：${response.status}`);
+    }
+    // 中文名只认 filename*=UTF-8'' 那一段；解不出来就退回一个能用的兜底名
+    const disposition = response.headers.get('Content-Disposition') || '';
+    const encoded = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
+    let filename = `第${chapterIds.length}章.txt`;
+    if (encoded) {
+      try { filename = decodeURIComponent(encoded[1]); } catch { /* 用兜底名 */ }
+    }
+    return { blob: await response.blob(), filename };
+  },
 
   /* ==================== 动态画像与工作流状态 ==================== */
   /**

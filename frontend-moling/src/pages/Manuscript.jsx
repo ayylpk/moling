@@ -34,6 +34,10 @@ export default function Manuscript() {
   const [text, setText] = useState('');
   const [dirty, setDirty] = useState(false);
   const [lastSaved, setLastSaved] = useState('尚未改动');
+  /** 导出多选。空集合 = 没选，这时工具栏只提供"导出本章" */
+  const [picked, setPicked] = useState(() => new Set());
+  const [exporting, setExporting] = useState(false);
+  const [notice, setNotice] = useState('');
 
   /* 卷：以卷表为准（卷名/卷号是真的），章按 volume_id 挂上去 */
   const volumes = useMemo(() => {
@@ -143,6 +147,58 @@ export default function Manuscript() {
     setChapterId(nextId);
   };
 
+  /* ---------- 导出 ---------- */
+
+  /* 换书就清空选择：上一本选中的 id 在这一本里指向别的章，留着会导出错的章 */
+  useEffect(() => { setPicked(new Set()); setNotice(''); }, [novel?.id]);
+
+  const togglePick = (id) =>
+    setPicked((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+
+  /* 全选只作用于**当前这一卷**：逐章点一百次不叫批量导出，而跨卷全选容易误伤 */
+  const volumeChapterIds = (volume?.chapters ?? []).map((item) => item.id);
+  const allPickedInVolume = volumeChapterIds.length > 0 && volumeChapterIds.every((id) => picked.has(id));
+  const toggleAllInVolume = () =>
+    setPicked((current) => {
+      const next = new Set(current);
+      if (allPickedInVolume) for (const id of volumeChapterIds) next.delete(id);
+      else for (const id of volumeChapterIds) next.add(id);
+      return next;
+    });
+
+  /**
+   * 单章与批量走的是同一个接口，区别只是 ids 里有几个。
+   *
+   * 用 fetch 取回 Blob 再由前端触发下载，而不是挂一个指向导出地址的链接 ——
+   * 因为导出失败时后端回的是 JSON，直接导航过去只会把一段错误 JSON 存成 .txt。
+   */
+  const runExport = async (ids) => {
+    if (ids.length === 0 || exporting) return;
+    if (dirty) saveText();
+    setExporting(true);
+    setNotice('');
+    try {
+      const { blob, filename } = await api.exportChapters(novel.id, ids);
+      const url = window.URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(url);
+      setNotice(`已导出 ${ids.length} 章：${filename}`);
+    } catch (cause) {
+      setNotice(cause.message || '导出失败');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   if (!novel) {
     return (
       <main className="wb-page manuscript-page enter" style={{ maxWidth: 'none' }}>
@@ -175,7 +231,20 @@ export default function Manuscript() {
           ))}
         </div>
         <div className="manuscript__save">
-          <span className="anno">{lastSaved}</span>
+          <span className="anno">{notice || lastSaved}</span>
+          <button
+            type="button"
+            className="btn btn--sm"
+            disabled={!chapter || exporting}
+            onClick={() => runExport([chapter.id])}
+          >
+            导出本章
+          </button>
+          {picked.size > 0 && (
+            <button type="button" className="btn btn--sm" disabled={exporting} onClick={() => runExport([...picked])}>
+              {exporting ? '导出中…' : `导出选中 ${picked.size} 章`}
+            </button>
+          )}
           <button type="button" className="btn btn--primary" disabled={!dirty} onClick={() => saveText()}>
             确认保存
           </button>
@@ -190,19 +259,33 @@ export default function Manuscript() {
           <nav className="ms-editor__toc">
             <p className="eyebrow">全书 {chapters.length} 章</p>
             <h3>{`《${novel.title}》`}</h3>
+            {/* checkbox 不能放进 button 里，所以目录行改成「多选框 + 章条目」的组合 */}
+            <div className="toc-tools">
+              <span className="chip" onClick={toggleAllInVolume}>
+                {allPickedInVolume ? '取消全选本卷' : '全选本卷'}
+              </span>
+              {picked.size > 0 && <span className="chip" onClick={() => setPicked(new Set())}>清空已选</span>}
+            </div>
             {volume?.chapters.map((item) => (
-              <button
-                className={`toc-item${item.id === chapter?.id ? ' is-active' : ''}`}
-                type="button"
-                onClick={() => selectChapter(item.id)}
-                key={item.id}
-              >
-                <span className="toc-num">{String(item.idx).padStart(2, '0')}</span>
-                <span className="toc-name">{item.title}</span>
-                <span className={`toc-status is-${item.textStage === 'final' ? 'final' : item.textStage === 'draft' ? 'draft' : 'outlined'}`}>
-                  {(STAGE_META[item.textStage] || STAGE_META.none).toc}
-                </span>
-              </button>
+              <div className="toc-row" key={item.id}>
+                <input
+                  type="checkbox"
+                  checked={picked.has(item.id)}
+                  onChange={() => togglePick(item.id)}
+                  aria-label={`选择第 ${item.idx} 章用于导出`}
+                />
+                <button
+                  className={`toc-item${item.id === chapter?.id ? ' is-active' : ''}`}
+                  type="button"
+                  onClick={() => selectChapter(item.id)}
+                >
+                  <span className="toc-num">{String(item.idx).padStart(2, '0')}</span>
+                  <span className="toc-name">{item.title}</span>
+                  <span className={`toc-status is-${item.textStage === 'final' ? 'final' : item.textStage === 'draft' ? 'draft' : 'outlined'}`}>
+                    {(STAGE_META[item.textStage] || STAGE_META.none).toc}
+                  </span>
+                </button>
+              </div>
             ))}
           </nav>
 

@@ -35,9 +35,28 @@ export const API = {
   /** GET /api/novels/:id */
   novel: (id) => `/api/novels/${id}`,
 
-  /* ==================== 建书可选维度 ==================== */
+  /* ==================== 类型与文风库 ==================== */
   /** GET /api/flavors —— { styles: string[], genres: string[] }，取自 agent/skills/ 下的目录名 */
   flavors: () => '/api/flavors',
+  /**
+   * GET /api/flavors/:维度 —— { dimension, agents: string[], items: [...] }
+   * `agents` 是"这一维度该有哪几片"（类型 7 片、文风 2 片），由后端给，**别写死在前端**。
+   */
+  flavorDimension: (dimension) => `/api/flavors/${encodeURIComponent(dimension)}`,
+  /** GET /api/flavors/:维度/:名字 —— { dimension, name, fragments, missing } */
+  flavor: (dimension, name) => `/api/flavors/${encodeURIComponent(dimension)}/${encodeURIComponent(name)}`,
+  /** POST /api/flavors/:维度 —— body: {name, fragments}。重名 409 并带回现成的名字，**不覆盖** */
+  createFlavor: (dimension) => `/api/flavors/${encodeURIComponent(dimension)}`,
+  /** PUT /api/flavors/:维度/:名字 —— body: {name?, fragments?}；给 name 就改名，给 fragments 就改内容 */
+  updateFlavor: (dimension, name) => `/api/flavors/${encodeURIComponent(dimension)}/${encodeURIComponent(name)}`,
+  /** DELETE —— **不真删**，只是把这个目录 rename 进 .workbuddy/flavor-trash/，返回 movedTo */
+  removeFlavor: (dimension, name) => `/api/flavors/${encodeURIComponent(dimension)}/${encodeURIComponent(name)}`,
+  /**
+   * POST /api/flavors/generate —— 素材 → 一个类型草案(7片) + 一个文风草案(2片)。
+   * body 三选一：{text} | {image:{mediaType,base64}} | {document:{base64}}（.docx）。
+   * **素材不落任何地方**：base64 进请求体，用完即弃。耗时约 30–40 秒。
+   */
+  generateFlavor: '/api/flavors/generate',
 
   /* ==================== 世界观（多版本） ==================== */
   /** GET /api/novels/:id/worlds —— 全部版本（读当前版本取列表第一项） */
@@ -75,6 +94,15 @@ export const API = {
   /* ==================== 正文 ==================== */
   /** GET/PUT /api/chapters/:id/text?stage=draft|final&novelId= */
   chapterText: (chapterId, stage = 'draft', novelId) => `/api/chapters/${chapterId}/text?stage=${stage}&novelId=${novelId}`,
+  /**
+   * GET /api/novels/:id/export?ids=1,2,3 —— 导出正文为 txt。
+   *
+   * **单章与批量是同一个接口**：ids 里给一个就是单章。回来的是文件本体（text/plain）
+   * 而不是 JSON，只有出错时才回 JSON —— 所以调用方必须先用 fetch 判 status，
+   * 不能把浏览器直接指到这个地址上（那样出错会把一段错误 JSON 存成 .txt）。
+   * 取哪一版正文固定为「终稿优先、缺则退初稿」，用了初稿的章节会写进文件开头的说明块。
+   */
+  exportChapters: (novelId, ids) => `/api/novels/${novelId}/export?ids=${ids.join(',')}`,
 
   /* ==================== 中心 Agent 与工作流状态 ==================== */
   /** POST /api/novels/:id/chat —— body: {message, history?}；唯一与作者对话的入口 */

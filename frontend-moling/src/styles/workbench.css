@@ -701,6 +701,13 @@
 .toc-status { font-size: 10px; color: var(--m-ink-3); }
 .toc-status.is-final { color: var(--m-indigo); }
 
+/* 目录行 = 多选框 + 章条目。多选框不能塞进 button 里（交互元素不能嵌套），
+   所以行外面套一层；.toc-item 原本靠 width:100% 独占一行，进了 flex 行要改成撑满剩余宽度 */
+.toc-row { display: flex; align-items: center; gap: 6px; }
+.toc-row input[type="checkbox"] { flex: 0 0 auto; margin: 0; accent-color: var(--m-cinnabar); }
+.toc-row .toc-item { width: auto; flex: 1 1 auto; min-width: 0; }
+.toc-tools { display: flex; gap: 6px; margin-bottom: 8px; }
+
 .ms-editor__paper { padding: 38px clamp(24px, 5vw, 72px); border-right: 1px solid var(--m-line); }
 .ms-editor__heading { position: relative; padding-bottom: 20px; border-bottom: 1px solid var(--m-line); }
 .ms-editor__heading h2 { margin-top: 3px; font-family: var(--f-display); font-size: 29px; font-weight: 400; }
