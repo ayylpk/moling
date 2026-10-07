@@ -39,7 +39,8 @@ describe('小说 catalog 元数据', () => {
     const database = new Database(':memory:')
     try {
       initializeCatalogSchema(database)
-      database.run("INSERT INTO novels (slug, title, themes) VALUES ('xuanhuan', '玄幻', ?)", JSON.stringify(['玄幻', '成长']))
+      // 与仓库里其它地方一致：用 query(...).run(参数) 这一形态传参
+      database.query("INSERT INTO novels (slug, title, themes) VALUES ('xuanhuan', '玄幻', ?)").run(JSON.stringify(['玄幻', '成长']))
       expect(database.query('SELECT json_valid(themes) AS valid FROM novels WHERE slug = ?').get('xuanhuan')).toEqual({ valid: 1 })
     } finally {
       database.close()

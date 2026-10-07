@@ -5,6 +5,7 @@ import {
   assertDimensionMatches,
   composePrompt,
   describeComposition,
+  FLAVOR_SYNC_RULES,
   GENRE_DIR,
   listGenres,
   listStyles,
@@ -66,8 +67,12 @@ describe('composePrompt：文风与类型会改变提示词', () => {
     expect(composed.slice(head, tail)).toContain('=== 类型：')
   })
 
-  test('不选文风与类型时，提示词 = base + 红线', () => {
-    expect(composePrompt(BASE, 'writer', '', '', NO_AI_VOICE)).toBe([BASE, NO_AI_VOICE].join('\n\n'))
+  test('不选文风与类型时，少的只是那两段片段；同步契约与红线照旧都在', () => {
+    // 同步契约（FLAVOR_SYNC_RULES）是**常驻**的：它规定"类型与文风都必须生效、
+    // 且不许覆盖世界观与章纲"，这与选了哪个维度无关，所以一个维度都没选时它也在。
+    // 少的只有 类型片段 与 文风片段 这两段。
+    expect(composePrompt(BASE, 'writer', '', '', NO_AI_VOICE))
+      .toBe([BASE, FLAVOR_SYNC_RULES, NO_AI_VOICE].join('\n\n'))
   })
 
   test('undefined 与空串等价（前端可能传 undefined）', () => {
@@ -95,12 +100,12 @@ describe('红线永远在最后', () => {
 describe('自由文本不炸（作者可以随便写）', () => {
   test('不存在的文风名：少一段，照样拼得出来', () => {
     const composed = composePrompt(BASE, 'writer', '我自己定义的节奏', '', NO_AI_VOICE)
-    expect(composed).toBe([BASE, NO_AI_VOICE].join('\n\n'))
+    expect(composed).toBe([BASE, FLAVOR_SYNC_RULES, NO_AI_VOICE].join('\n\n'))
   })
 
   test('不存在的类型名：同上', () => {
     expect(composePrompt(BASE, 'writer', '', '90年代港风', NO_AI_VOICE))
-      .toBe([BASE, NO_AI_VOICE].join('\n\n'))
+      .toBe([BASE, FLAVOR_SYNC_RULES, NO_AI_VOICE].join('\n\n'))
   })
 
   test('两边都不存在也照样拼得出来，不抛错', () => {

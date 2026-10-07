@@ -14,7 +14,15 @@ const DEFAULT_BASE_URL = 'https://api.siliconflow.cn/v1'
 const DEFAULT_MODEL = 'Qwen/Qwen3-Embedding-0.6B'
 const DEFAULT_DIMENSIONS = 1024
 
-export const createSiliconFlowEmbeddingClient = (config: SiliconFlowEmbeddingConfig = {}, fetcher: typeof fetch = fetch): EmbeddingClient => {
+/**
+ * 只要"能发一个请求、拿回一个 Response"这么点能力。
+ *
+ * 刻意不用 `typeof fetch`：那个类型还要求 `preconnect` 这类属性，而这里一个都用不到。
+ * 入参类型开得比需要的宽，只会让调用方（比如测试里塞一个假 fetch）传不进来。
+ */
+export type FetchLike = (input: string, init: RequestInit) => Promise<Response>
+
+export const createSiliconFlowEmbeddingClient = (config: SiliconFlowEmbeddingConfig = {}, fetcher: FetchLike = fetch): EmbeddingClient => {
   const apiKey = config.apiKey ?? process.env.SILICONFLOW_API_KEY
   const baseUrl = (config.baseUrl ?? process.env.SILICONFLOW_BASE_URL ?? DEFAULT_BASE_URL).replace(/\/+$/, '')
   const model = config.model ?? process.env.SILICONFLOW_EMBEDDING_MODEL ?? DEFAULT_MODEL

@@ -38,10 +38,13 @@ export const createAutomaticPortraitUpdater = (model: PortraitModel, database: D
     const byCharacter = new Map<number, typeof rows>()
     for (const row of rows) {
       const metadata = JSON.parse(row.metadata || '{}') as { characterId?: number; category?: string }
-      if (!Number.isInteger(metadata.characterId)) continue
-      const current = byCharacter.get(metadata.characterId) ?? []
+      // 先落到局部常量再判：`Number.isInteger` 不是类型守卫，直接判 `metadata.characterId`
+      // 不会让 TS 窄化它，后面两处用它就都成了 number | undefined
+      const characterId = metadata.characterId
+      if (typeof characterId !== 'number' || !Number.isInteger(characterId)) continue
+      const current = byCharacter.get(characterId) ?? []
       current.push({ ...row, metadata: JSON.stringify(metadata) })
-      byCharacter.set(metadata.characterId, current)
+      byCharacter.set(characterId, current)
     }
     const updated: number[] = []
     for (const [characterId, characterRows] of byCharacter) {
