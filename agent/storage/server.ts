@@ -2,6 +2,7 @@ import {
   catalog,
   chapter as chapterApi,
   character as characterApi,
+  flavor as flavorApi,
   location as locationApi,
   memory as memoryApi,
   outline as outlineApi,
@@ -37,6 +38,55 @@ const isNotFound = (value: unknown): value is { __notFound: string } =>
 
 const json = (body: unknown, status = 200): Response => Response.json(body, { status, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type', 'Access-Control-Allow-Methods': 'GET,POST,PUT,OPTIONS' } })
 const bad = (message: string, status = 400) => json({ message }, status)
+
+/** 视觉接口收哪些图片格式 —— 与百炼支持的 Content Type 对齐 */
+const ALLOWED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/bmp']
+
+/** base64 长度上限（约 10MB 原文件）。再大应该先压，而不是把请求体撑爆 */
+const MEDIA_BASE64_LIMIT = 14_000_000
+
+/** 素材体里出现了几种素材？三种互斥，一次只能给一种 */
+const toMaterial = (body: { text?: string; image?: { mediaType?: string; base64?: string }; document?: { base64?: string } }) => {
+  const image = body.image
+  const imageBase64 = typeof image?.base64 === 'string' ? image.base64 : ''
+  const documentBase64 = typeof body.document?.base64 === 'string' ? body.document.base64 : ''
+  const text = typeof body.text === 'string' ? body.text.trim() : ''
+
+  const kinds = [text.length > 0, imageBase64.length > 0, documentBase64.length > 0].filter(Boolean).length
+  if (kinds > 1) throw new TypeError('一次只能给一种素材：文本、图片、或 Word 文档')
+
+  if (imageBase64) {
+    const mediaType = String(image?.mediaType ?? '').toLowerCase()
+    if (!ALLOWED_IMAGE_TYPES.includes(mediaType)) {
+      throw new TypeError(`图片格式只支持 ${ALLOWED_IMAGE_TYPES.join('、')}，收到：${mediaType || '（空）'}`)
+    }
+    if (imageBase64.length > MEDIA_BASE64_LIMIT) {
+      throw new TypeError(`图片太大（base64 ${Math.round(imageBase64.length / 1024 / 1024)}MB），请先压缩再传`)
+    }
+    return { kind: 'image' as const, mediaType, base64: imageBase64 }
+  }
+
+  // .docx 原样交给 service 解析（它是 zip，解出来只有正文文字），
+  // 这里不解析：HTTP 层只做传输，不认识文件格式
+  if (documentBase64) {
+    if (documentBase64.length > MEDIA_BASE64_LIMIT) {
+      throw new TypeError(`Word 文件太大（base64 ${Math.round(documentBase64.length / 1024 / 1024)}MB）`)
+    }
+    return { kind: 'document' as const, base64: documentBase64 }
+  }
+
+  if (!text) throw new TypeError('缺少素材：给 text、image.base64 或 document.base64')
+  return { kind: 'text' as const, text }
+}
+
+/**
+ * 路径分段必须**解码**：`url.pathname` 是 percent-encoded 的，而类型/文风的名字
+ * 和条目的名字都是中文（`/api/flavors/类型/玄幻`），不解码就永远匹配不上。
+ * 解码失败不抛错 —— 保持原样让它落进后面的维度校验，变成 400 而不是 500。
+ */
+const decodeSegment = (segment: string): string => {
+  try { return decodeURIComponent(segment) } catch { return segment }
+}
 
 /** novelId 有效吗 —— 路径里的 :id 在这里是字符串 */
 const novelIdOf = (raw: string | undefined): number => {
@@ -89,16 +139,82 @@ const server = Bun.serve({
   async fetch(request) {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type', 'Access-Control-Allow-Methods': 'GET,POST,PUT,OPTIONS' } })
     const url = new URL(request.url)
-    const parts = url.pathname.split('/').filter(Boolean)
+    const parts = url.pathname.split('/').filter(Boolean).map(decodeSegment)
     const novelPath = parts[0] === 'api' && parts[1] === 'novels' && parts[2] !== undefined
 
     try {
       if (url.pathname === '/api/health') return json({ ok: true, storage: 'catalog + per-novel sqlite' })
 
+      /* ==================== 类型 / 文风库 ==================== */
+      // 这一组**不接 novelId** —— 两个维度全局共享，任何一本书都用同一套。
+      // 读写对象是 agent/skills/ 下的目录与片段文件（为什么不上 SQLite 见 skills/manage.ts）。
+      // 放在最前面：建书表单与素材生成页都要靠这里的清单渲染。
+      if (parts[0] === 'api' && parts[1] === 'flavors') {
+        const dimension = parts[2]
+        const flavorName = parts[3]
+
+        // 清单：随 agent/skills/ 下的目录变化而变，不写死在前端
+        if (!dimension && request.method === 'GET') return json(flavorApi.listFlavors())
+
+        // ⚠️ 必须排在维度分支**前面**：否则 'generate' 会被当成维度名（虽然必然校验不过，
+        // 但报出来的错会是"维度只能是类型或文风"，把人往错的方向引）
+        if (dimension === 'generate' && request.method === 'POST') {
+          const body = await request.json() as {
+            text?: string
+            image?: { mediaType?: string; base64?: string }
+            document?: { base64?: string }
+          }
+          return json(await flavorApi.generateFromMaterial(toMaterial(body)), 201)
+        }
+
+        if (dimension && !flavorName) {
+          // agents 一起回：前端据此渲染编辑框，别把"类型 7 片、文风 2 片"写死在前端
+          if (request.method === 'GET') {
+            return json({ dimension, agents: flavorApi.agentsOf(dimension), items: flavorApi.listDimension(dimension) })
+          }
+          if (request.method === 'POST') {
+            const body = await request.json() as { name?: string; fragments?: Record<string, string> }
+            const saved = flavorApi.saveFlavor(dimension, body.name ?? '', body.fragments ?? {}, false)
+            // 重名**不覆盖**：把现成的名字交回去让用户改，而不是替他把已有的那份冲掉
+            if (!saved.ok) return json(saved, 409)
+            return json(saved, 201)
+          }
+        }
+
+        if (dimension && flavorName) {
+          if (request.method === 'GET') {
+            const found = flavorApi.getFlavor(dimension, flavorName)
+            return found ? json(found) : bad(`「${dimension}/${flavorName}」不存在`, 404)
+          }
+          if (request.method === 'PUT') {
+            const body = await request.json() as { name?: string; fragments?: Record<string, string> }
+            // **先改名再写内容**：改完名目录就换了，后面的写入必须落在新名字上
+            let current = flavorName
+            if (body.name !== undefined && body.name !== flavorName) {
+              const renamed = flavorApi.renameFlavor(dimension, flavorName, body.name)
+              if (!renamed.ok) return json(renamed, renamed.reason === 'duplicate' ? 409 : 404)
+              current = renamed.to
+            }
+            // 只改名不写内容也是合法的一次调用
+            if (body.fragments === undefined) {
+              return flavorApi.getFlavor(dimension, current)
+                ? json({ ok: true, created: false, name: current, files: [] })
+                : bad('改完名之后读不到这个条目', 500)
+            }
+            const saved = flavorApi.saveFlavor(dimension, current, body.fragments, true)
+            if (!saved.ok) return json(saved, saved.reason === 'duplicate' ? 409 : 404)
+            return json(saved)
+          }
+          if (request.method === 'DELETE') {
+            const removed = flavorApi.removeFlavor(dimension, flavorName)
+            if (!removed.ok) return json(removed, 404)
+            // 200 里带回挪到了哪里 —— 删除只是隔离，找得回来这件事要说清
+            return json(removed)
+          }
+        }
+      }
+
       /* ==================== 书架 ==================== */
-      // 文风与类型的可选项放在最前面：前端建书表单要靠它渲染下拉，
-      // 而这个清单会随 agent/skills/ 下的目录变化而变，不该写死在前端
-      if (url.pathname === '/api/flavors' && request.method === 'GET') return json(catalog.listFlavors())
       if (parts[0] === 'api' && parts[1] === 'novels' && !parts[2]) {
         if (request.method === 'GET') return json(catalog.listNovels())
         if (request.method === 'POST') {

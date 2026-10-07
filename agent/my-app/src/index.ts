@@ -39,6 +39,8 @@ export * as decision from './controller/actorDecisionController'
 export * as workflow from './controller/workflowController'
 export * as memory from './controller/memoryController'
 export * as catalog from './controller/catalogController'
+// 类型 / 文风库：和书架一样不接 novelId —— 这两个维度是全局共享的，不属于任何一本书
+export * as flavor from './controller/flavorController'
 export * as state from './controller/stateController'
 export * as writing from './controller/writingController'
 
@@ -71,3 +73,11 @@ export type { WorkflowSummary, StageCounts, WorkflowStage } from './service/work
 export type { ChapterContext } from './controller/chapterController'
 export type { NovelStateSnapshot } from './controller/stateController'
 export type { WritingBrief, CastSheet, PlaceSheet } from './controller/writingController'
+export type {
+  FlavorFragments,
+  ManagedFlavor,
+  SaveOutcome,
+  RenameOutcome,
+  RemoveOutcome,
+} from '../../skills'
+export type { GenerationResult, GeneratedFlavor, MaterialInput } from './service/flavorGenerationService'

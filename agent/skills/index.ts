@@ -101,6 +101,32 @@ export {
   FLAVOR_SYNC_RULES,
   STYLE_DIR,
   GENRE_DIR,
+  DIMENSIONS,
+  isDimension,
+  listFlavorNames,
+  SKILLS_DIR,
+  FRAGMENT_EXT,
   type AgentKey,
+  type Dimension,
   type Flavor,
 } from './loader'
+
+/* ==================== 文风 / 类型的增删改查（manage） ==================== */
+// 它们是**文件操作**，不是数据库操作 —— 为什么不上 SQLite 见 manage.ts 顶部的说明。
+// 删除只做 rename 挪到隔离区，全模块没有 unlink / rm。
+export {
+  DIMENSION_AGENTS,
+  agentsOfDimension,
+  listFlavors,
+  readFlavor,
+  saveFlavor,
+  renameFlavor,
+  removeFlavor,
+  trashRoot,
+  type FlavorFragments,
+  // loader 已经导出了同名类型（一部书的 { style, genre }），这里换个名字避免撞
+  type Flavor as ManagedFlavor,
+  type SaveOutcome,
+  type RenameOutcome,
+  type RemoveOutcome,
+} from './manage'

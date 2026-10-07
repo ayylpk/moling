@@ -1,4 +1,4 @@
-import { assertDimensionMatches, GENRE_DIR, listGenres, listStyles, STYLE_DIR } from '../../../skills'
+import { assertDimensionMatches, GENRE_DIR, STYLE_DIR } from '../../../skills'
 import { listNovelsInCatalog, type CatalogNovel } from '../db/connection'
 import { createNovelInCatalog, getNovelInCatalog, type NovelCreateInput } from '../service/catalogService'
 
@@ -12,15 +12,6 @@ export const listNovels = (): CatalogNovel[] => listNovelsInCatalog()
 export const getNovel = (novelId: number): CatalogNovel | null => getNovelInCatalog(novelId)
 
 export const createNovel = (input: NovelCreateInput): CatalogNovel => createNovelInCatalog(input)
-
-/**
- * 现在有哪些文风与类型可选。
- *
- * **它读磁盘上的目录，不是代码里的数组** —— 加一种文风就是加一个目录，
- * 前端下拉里自动出现，这里和前端都不用改。
- * 也正因如此**不能缓存成常量**：一缓存就等于又把"文件即真相"变成了代码里的副本。
- */
-export const listFlavors = () => ({ styles: listStyles(), genres: listGenres() })
 
 /**
  * 建书前校验：文风与类型有没有写错。

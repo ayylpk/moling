@@ -30,7 +30,7 @@ import path from 'node:path'
  * 放在中间会被后面的文风片段"稀释"——模型读到文风的鼓励就容易忘了禁。
  */
 
-const SKILLS_DIR = import.meta.dir
+export const SKILLS_DIR = import.meta.dir
 
 /** 目录名 → agent 键。加一个 agent 时这里也要加一行，否则它的片段永远不会被读到 */
 export type AgentKey = 'story-planner' | 'character' | 'location' | 'architect' | 'actor' | 'writer' | 'polisher'
@@ -61,14 +61,29 @@ export const FLAVOR_SYNC_RULES = `
 `.trim()
 
 /** 片段文件扩展名。用 .md 是因为它们就是给人看的、也要能被人改 */
-const FRAGMENT_EXT = '.md'
+export const FRAGMENT_EXT = '.md'
 
 export const STYLE_DIR = '文风'
 export const GENRE_DIR = '类型'
 
+/** 两个可选维度的目录名。新增第三个维度时只改这里，别在别处再写一份字面量 */
+export const DIMENSIONS = [GENRE_DIR, STYLE_DIR] as const
+
+export type Dimension = (typeof DIMENSIONS)[number]
+
+/** 这个维度名合法吗 —— 所有写操作的第一道闸，防止拼错维度名建出野目录 */
+export const isDimension = (value: string): value is Dimension =>
+  (DIMENSIONS as readonly string[]).includes(value)
+
 /** 现在有哪些文风 / 类型可选 —— 前端建书表单的选项该从这里来，而不是硬编码在页面里 */
 export const listStyles = (): string[] => listSubdirs(STYLE_DIR)
 export const listGenres = (): string[] => listSubdirs(GENRE_DIR)
+
+/**
+ * 按维度列条目名 —— 给 CRUD 用。
+ * 与 listStyles/listGenres 共用同一份读盘逻辑，避免"列清单"在两个地方各写一遍。
+ */
+export const listFlavorNames = (dimension: string): string[] => listSubdirs(dimension)
 
 const listSubdirs = (dimension: string): string[] => {
   const full = path.join(SKILLS_DIR, dimension)
