@@ -24,6 +24,7 @@ const NAV = [
   { to: '/w/cast', zh: '色', name: '角色', hint: '声线 · 欲望 · 关系' },
   { to: '/w/plot', zh: '情', name: '剧情', hint: '逐章目标 · 冲突 · 钩子' },
   { to: '/w/style', zh: '风', name: '文风', hint: '文风基准 · 禁改名单' },
+  { to: '/w/flavors', zh: '类', name: '题材库', hint: '类型与文风 · 素材生成' },
   { to: '/w/manuscript', zh: '稿', name: '书稿', hint: '卷章目录 · 正文编辑' },
 ];
 

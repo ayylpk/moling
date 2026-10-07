@@ -10,6 +10,7 @@ import Outline from './pages/Outline.jsx';
 import Cast from './pages/Cast.jsx';
 import Plot from './pages/Plot.jsx';
 import Style from './pages/Style.jsx';
+import Flavors from './pages/Flavors.jsx';
 import Manuscript from './pages/Manuscript.jsx';
 import World from './pages/World.jsx';
 
@@ -62,6 +63,7 @@ export default function App() {
               <Route path="cast" element={<Cast />} />
               <Route path="plot" element={<Plot />} />
               <Route path="style" element={<Style />} />
+              <Route path="flavors" element={<Flavors />} />
               <Route path="manuscript" element={<Manuscript />} />
               <Route path="world" element={<World />} />
             </Route>

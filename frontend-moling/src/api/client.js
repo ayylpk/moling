@@ -36,6 +36,32 @@ export const api = {
    */
   listFlavors: () => request('/api/flavors'),
 
+  /* ==================== 题材与文风库 ==================== */
+  /**
+   * 一个维度下的全部条目：`{ dimension, agents[], items[] }`。
+   *
+   * `agents` 是后端给的"这一维度该有哪几片"（类型 7 片、文风 2 片）——
+   * 页面靠它渲染编辑框，**不把 7 和 2 写死在前端**。
+   * 维度名与条目名都是中文，必须 encodeURIComponent，否则路径里的中文到不了后端。
+   */
+  listFlavorDimension: (dimension) => request(`/api/flavors/${encodeURIComponent(dimension)}`),
+  /** 单个条目：`{ dimension, name, fragments, missing }` */
+  getFlavor: (dimension, name) => request(`/api/flavors/${encodeURIComponent(dimension)}/${encodeURIComponent(name)}`),
+  /** 建新条目。重名后端会回 409 并带上现成的名字，**不会覆盖** */
+  createFlavor: (dimension, name, fragments) =>
+    request(`/api/flavors/${encodeURIComponent(dimension)}`, { method: 'POST', body: JSON.stringify({ name, fragments }) }),
+  /** 改已有条目：给 `name` 就改名，给 `fragments` 就改内容，两者可一起给 */
+  updateFlavor: (dimension, name, patch) =>
+    request(`/api/flavors/${encodeURIComponent(dimension)}/${encodeURIComponent(name)}`, { method: 'PUT', body: JSON.stringify(patch) }),
+  /** 删除 —— 后端只是把它挪进隔离区，不真删 */
+  removeFlavor: (dimension, name) =>
+    request(`/api/flavors/${encodeURIComponent(dimension)}/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+  /**
+   * 素材 → 一个类型 + 一个文风草案。**素材不落任何地方**。
+   * 三种素材互斥，传其一：`{ text }` / `{ image: { mediaType, base64 } }` / `{ document: { base64 } }`
+   */
+  generateFlavor: (material) => request('/api/flavors/generate', { method: 'POST', body: JSON.stringify(material) }),
+
   /* ==================== 世界观 ==================== */
   listWorlds: (novelId) => request(`/api/novels/${novelId}/worlds`),
   createWorld: (novelId, world) => request(`/api/novels/${novelId}/worlds`, { method: 'POST', body: JSON.stringify(world) }),
