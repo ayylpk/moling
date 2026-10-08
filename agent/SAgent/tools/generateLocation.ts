@@ -3,7 +3,7 @@ import * as z from 'zod'
 
 import { createLocationAgent } from '../../Location/agent'
 import { buildLocationPrompt } from '../../Location/prompt'
-import { location as locationApi } from '../../my-app'
+import { draft as draftApi, location as locationApi } from '../../my-app'
 import { flavorOf, novelIdOf, pack, renderWorld } from './context'
 
 /**
@@ -34,7 +34,11 @@ export const generateLocation = tool(
       messages: [{ role: 'user', content: buildLocationPrompt({ world: input.world, existing: input.existing, need }) }],
     })
 
-    return pack('地点卡（草案，未落库）', res.structuredResponse)
+    const card = res.structuredResponse as { name?: string } | undefined
+    // 草案先落 drafts 表（stage='cast'，按名字记账）：采纳（save_location / 页面按钮）才有对象
+    const key = String(card?.name ?? '').trim() || `need:${need.slice(0, 24)}`
+    const stored = draftApi.saveDraft(novelId, 'cast', key, card ?? {})
+    return pack(`地点卡（待审核草案，未落库｜${stored.updatedAt}）`, card)
   },
   {
     name: 'generate_location',
@@ -43,7 +47,7 @@ export const generateLocation = tool(
       '★ parent 只能从已有地名里选，不许另造城市或学校 —— 工具会把已有地名一并给它。' +
       '★ 一次只造一个。' +
       '★ 世界观必须先落库，否则工具会报错。' +
-      '★ 它只返回内容，**不落库**；要保存接着调 save_location。',
+      '★ 它会把结果存为**待审核草案**，不落正式表；调用完必须停下交作者审核，他采纳后（下一轮）才能调 save_location。一轮不许再发起第二个生成动作。',
     schema: z.object({
       need: z.string().describe('这个地点要发生什么戏、为什么必须有它、父级地名是什么。'),
     }),

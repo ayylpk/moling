@@ -61,7 +61,12 @@ try {
       ...system.seed,
       messages: [{ role: "user", content: userTurn }],
     },
-    system.config,
+    {
+      ...system.config,
+      // turnId：一次 CLI 调用 = 一轮。阶段闸门（SAgent/turnGate.ts）按它记账，
+      // 强制"一轮只做一个生成阶段"——与 HTTP chat 路由同一套边界。
+      configurable: { ...system.config.configurable, turnId: `cli:${Date.now()}:${Math.random().toString(36).slice(2, 8)}` },
+    },
   )
 
   const messages = (result as { messages?: unknown[] }).messages ?? []

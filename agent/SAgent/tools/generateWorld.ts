@@ -2,7 +2,8 @@ import { tool } from 'langchain'
 import * as z from 'zod'
 
 import { createWorldAgent, parseWorld } from '../../story-planner/agent'
-import { flavorOf, novelOf, pack } from './context'
+import { draft as draftApi } from '../../my-app'
+import { flavorOf, novelIdOf, novelOf, pack } from './context'
 
 /**
  * 世界观生成工具 —— 把世界 agent 接到中心 Agent 手上（从旧的 run_world_planner 迁来）。
@@ -16,17 +17,19 @@ import { flavorOf, novelOf, pack } from './context'
  * 所以这里不开 novel.sqlite，只从目录库取这本书的题材/书名/文风当背景。
  * 这不是为了省一次连接，是因为**没有可读的东西**：硬塞一次空读只会让人以为读了什么。
  *
- * ── 它不落库 ──
- * 与另外三个生成工具同一条规矩：生成与落库是两个动作，采纳与否是中心 Agent 的决定。
- * 生成了不满意就重生成（库没被污染），落库失败也不用重新生成（生成贵、落库便宜）。
+ * ── 它不落库，但会存成待审核草案 ──
+ * 与另外几个生成工具同一条规矩：生成与落库是两个动作。区别在于**草案现在有处可放**：
+ * 结果存进 drafts 表（stage='world'），页面能看到"待审核草案"，作者采纳（下一轮 save_world
+ * 或页面按钮）才写正式表。重新生成只覆盖草案，库里的正式版本不受影响。
  *
  * ── 为什么要在这里补一个 name ──
  * 世界 agent 的 schema 里没有 name（它只产设定），而 save_world 落库时 name 是必填。
- * 与其让中心 Agent 每次落库前自己补，不如在这里补好——它返回的就是一份**能直接交给
- * save_world 的完整输入**。显式传的名字优先，没传就用书名兜底。
+ * 与其让中心 Agent 每次落库前自己补，不如在这里补好——它返回的就是一份**能直接落库的
+ * 完整输入**。显式传的名字优先，没传就用书名兜底。
  */
 export const generateWorld = tool(
   async ({ need, name }, config) => {
+    const novelId = novelIdOf(config)
     const novel = novelOf(config)
 
     const agent = createWorldAgent(undefined, flavorOf(config))
@@ -48,7 +51,10 @@ export const generateWorld = tool(
     })
 
     const world = parseWorld(res.structuredResponse)
-    return pack('世界观草案（未落库）', { name: name?.trim() || novel.title || novel.slug, ...world })
+    const content = { name: name?.trim() || novel.title || novel.slug, ...world }
+    // 草案先落 drafts 表：页面刷新后仍能读，采纳/放弃才有对象
+    const stored = draftApi.saveDraft(novelId, 'world', '', content)
+    return pack(`世界观草案（待审核，未落库｜${stored.updatedAt}）`, content)
   },
   {
     name: 'generate_world',
@@ -58,7 +64,8 @@ export const generateWorld = tool(
       '★ need 里要交代：题材、口味、这个世界必须写死的规则（例如「穿越必须付出代价」）、必须禁止的东西。' +
       '★ rules 的每一条都必须带代价——没有代价的规则就是外挂，这是这套世界观设计的核心。' +
       '★ 改世界观等于改地基：下游已产出的内容都要重跑。定了就不要反复改。' +
-      '★ 它只返回内容，**不落库**；要保存接着调 save_world（返回的结果可直接喂给它，name 已补好）。',
+      '★ 它把结果存为**待审核草案**，不落正式表；调用完必须停下，把草案交给作者审核，' +
+      '他明确采纳后（下一轮）才能调 save_world。一轮不许再发起第二个生成动作。',
     schema: z.object({
       need: z
         .string()

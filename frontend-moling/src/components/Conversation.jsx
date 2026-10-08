@@ -20,14 +20,31 @@ export default function Conversation({ collapsed, maximized, onToggleMax, onTogg
   /** 这本书现在到哪了（来自 `/workflow` 的 label，例如「正在整理世界观」）。
    *  空态得报出这本书做到哪了，不然作者会以为 Agent 根本没读他的书。 */
   const [where, setWhere] = useState('');
+  /** 待审核草案的摘要（阶段名 + 对象），生成后刷新。空数组 = 没有待审核的东西。 */
+  const [pending, setPending] = useState([]);
+
+  const stageLabel = { world: '世界观', cast: '角色/地点', volume_outline: '卷纲', prose: '正文', decision: '裁决' };
+  const pendingLabel = (item) => {
+    const base = stageLabel[item.stage] || item.stage;
+    if (item.stage === 'prose') return `正文第 ${item.targetKey} 章`;
+    if (item.stage === 'volume_outline') return `卷纲（${item.targetKey}）`;
+    if (item.stage === 'cast' && item.targetKey && !item.targetKey.startsWith('need:')) return `角色/地点：${item.targetKey}`;
+    return base;
+  };
+
+  const loadPending = (novelId, active) =>
+    api.listDrafts(novelId)
+      .then((items) => { if (active) setPending(Array.isArray(items) ? items : []); })
+      .catch(() => { if (active) setPending([]); });
 
   useEffect(() => { setDraft(''); setError(''); }, [novel?.id]);
   useEffect(() => {
-    if (!novel?.id) { setWhere(''); return undefined; }
+    if (!novel?.id) { setWhere(''); setPending([]); return undefined; }
     let active = true;
     api.workflow(novel.id)
       .then((result) => { if (active) setWhere(typeof result?.label === 'string' ? result.label : ''); })
       .catch(() => { if (active) setWhere(''); });   // 读不到就不摆 —— 摆个假状态比空着更糟
+    loadPending(novel.id, active);
     return () => { active = false; };
   }, [novel?.id]);
 
@@ -41,7 +58,7 @@ export default function Conversation({ collapsed, maximized, onToggleMax, onTogg
       const result = await api.chat(novel.id, message, chatMessages);
       setChatMessages([...next, { role: 'assistant', content: result.message || '中心 Agent 没有返回内容。' }]);
     } catch (cause) { setError(cause.message || '中心 Agent 暂时无法连接。'); }
-    finally { setSending(false); }
+    finally { setSending(false); loadPending(novel.id, true); }
   };
 
   /*
@@ -83,7 +100,12 @@ export default function Conversation({ collapsed, maximized, onToggleMax, onTogg
           <div className="conversation__context">
             <span className="status is-writing">{novel ? '已连接' : '等待选书'}</span>
             <strong>{novel ? `《${novel.title}》` : '请先创建或选择一本小说'}</strong>
-            <span className="anno">{where || '中心 Agent 自动负责后续编排'}</span>
+            <span className="anno">{where || '当前阶段：等待指令（一次只做一个生成阶段）'}</span>
+            {pending.length > 0 && (
+              <span className="anno">
+                待审核草案：{pending.map(pendingLabel).join('、')} —— 回复「采纳…」或到对应页面点「采纳并保存」
+              </span>
+            )}
           </div>
 
           <div className="conversation__messages">
@@ -91,11 +113,16 @@ export default function Conversation({ collapsed, maximized, onToggleMax, onTogg
               <div className="conversation__message is-system">
                 <span className="conversation__message-label">使用说明</span>
                 {where && <p><strong>{where}</strong>——说一声下一步做什么，它会从当前进度接着做。</p>}
-                <p>直接告诉中心 Agent 你想写什么。世界观、角色、大纲和章节由它按流程处理。</p>
+                <p>一轮只做一个生成阶段：生成完会停下，把草案交给你审核；你说「采纳」它才落库。</p>
               </div>
             )}
             {chatMessages.map((item, index) => <div className={`conversation__message is-${item.role === 'user' ? 'user' : 'agent'}`} key={`${item.role}-${index}`}><span className="conversation__message-label">{item.role === 'user' ? '你' : '中心 Agent'}</span><p>{item.content}</p></div>)}
-            {sending && <div className="conversation__message is-system"><span className="conversation__message-label">中心 Agent</span><p>正在读取小说状态并安排下一步……</p></div>}
+            {sending && (
+              <div className="conversation__message is-system">
+                <span className="conversation__message-label">中心 Agent</span>
+                <p>正在处理：{where || '读取小说状态'}……本轮只做一个生成阶段，完成后会停下来等你审核。</p>
+              </div>
+            )}
           </div>
 
           {error && <p className="conversation__error">{error}</p>}

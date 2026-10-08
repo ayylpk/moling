@@ -4,7 +4,7 @@ import * as z from 'zod'
 import { createModel } from '../../create_model'
 import { createArchitectAgent } from '../../Architect/agent'
 import { buildArchitectPrompt } from '../../Architect/prompt'
-import { character as characterApi } from '../../my-app'
+import { character as characterApi, draft as draftApi } from '../../my-app'
 import { flavorOf, novelIdOf, novelOf, pack, renderWorld } from './context'
 
 /**
@@ -54,7 +54,30 @@ export const generateOutline = tool(
       ],
     })
 
-    return pack(`卷大纲草案（${range}）`, res.structuredResponse)
+    // 草案先落 drafts 表（stage='volume_outline'，按章号段记账）：采纳才有对象。
+    // 卷元数据（卷号/卷名/起止章）Architect 不产，按章号推断补上，采纳时直接可用。
+    const outline = res.structuredResponse
+    const indexes = (Array.isArray(outline?.chapters) ? outline.chapters : [])
+      .map((chapter: { index?: unknown }) => Number(chapter?.index))
+      .filter((value: number) => Number.isInteger(value) && value > 0)
+    const startChapter = indexes.length ? Math.min(...indexes) : 1
+    const endChapter = indexes.length ? Math.max(...indexes) : startChapter
+    const content = {
+      range,
+      need,
+      volume: {
+        no: 1,
+        name: `第 1 卷`,
+        goal: need,
+        from_state: '',
+        to_state: '',
+        start_chapter: startChapter,
+        end_chapter: endChapter,
+      },
+      ...outline,
+    }
+    const stored = draftApi.saveDraft(novelId, 'volume_outline', `${startChapter}-${endChapter}`, content)
+    return pack(`卷大纲草案（${range}｜待审核，未落库｜${stored.updatedAt}）`, content)
   },
   {
     name: 'generate_outline',
@@ -65,7 +88,8 @@ export const generateOutline = tool(
       '后续分段的 previous 里要带上已定稿的锚点和此前章节的摘要。' +
       '★ 全篇级字段（direction / structure.type / mainPlot / subplots）由**第一卷定稿**，后续卷必须原样回填、一个字都不许改 —— 这是防设定漂移的检查点。' +
       '★ 世界观和本卷要用到的角色卡都必须已落库，否则它只能现编人名；工具会把场上角色一并给它。' +
-      '★ 它只返回内容，**不落库**；要保存接着调 save_volume_outline（卷 + 锚点 + 卷纲），再逐章 save_chapter_outline。',
+      '★ 它会把结果存为**待审核草案**（含按章号推断的卷元数据），不落正式表；调用完必须停下交作者审核，' +
+      '他采纳后（下一轮）才能调 save_volume_outline + save_chapter_outline。一轮不许再发起第二个生成动作。',
     schema: z.object({
       range: z.string().describe('本次只出哪些章，例如「第 1–13 章」。必须写，防止一次吐 50 章被截断。'),
       need: z.string().describe('本卷要交付什么：本卷的戏剧任务、必须发生的转折、要埋 / 要收的伏笔。'),

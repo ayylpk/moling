@@ -40,6 +40,7 @@ import { createModel } from "../create_model"
 import { SAGENT_PROMPT } from "./prompt"
 import { COMPACT_PROMPT } from "./compact"
 import { NovelState, novelStateSync } from "./stateLite"
+import { turnGate } from "./turnGate"
 import { memoryTools, portraitTools, generateChapterTool, worldTools, characterTools, locationTools, outlineTools, chapterOutlineTools, decisionTools, generateWorld, generateCharacter, generateLocation, generateOutline, generateDecision } from "./tools/cleanIndex"
 
 /* ==================== 可配常量 ==================== */
@@ -69,26 +70,22 @@ export const CONTEXT_BUDGET = {
 }
 
 /**
- * 单次 invoke 允许的**图步数**上限。
+ * 单次 invoke 允许的**图步数**上限 —— 只是兜底，不是配额。
  *
- * LangGraph 默认 **25** —— 那个数字是给"一问一答"的 ReAct 用的，中心 agent 不适用：
- * 它一轮里要连调若干子 agent 再落库，而**一次工具调用算两步**（模型一步、工具一步），
- * 25 步只够十来次工具调用。实测就是：作者一条指令说"立世界观 + 排大纲"，
- * 走到一半抛 `Recursion limit of 25 reached without hitting a stop condition`。
+ * ── 曾经为什么是 200 ──
+ * 旧版流程允许（甚至默认）一条指令连跑「世界观 → 角色 → 大纲 → 章纲」一整条链，
+ * 200 步是给那条链预算的。那正是流程失控的根源之一：作者看不到中间结果，
+ * 方向写歪要等十几步之后才发现，撞上限还把"重试"当成正常出路。
  *
- * 给 **200**（≈95 次工具调用）：够把「世界观 → 角色 → 大纲 → 章纲」一整条链走完。
- * 60 不够 —— 实测卡在"世界观建完、正文还没开始"的位置，作者看到的是刚要成功就停了。
- *
- * ── 更正上一轮我说过的一句 ──
- * 我当时说"一轮跑太久作者看不到进度、也取消不了"，那句是错的：
- * 执笔模式的夜案画布**每 5 秒**重取一次 `/workflow`，六盏灯会跟着亮，
- * 所以长轮次期间是有进度可见的 —— 这正是不限步数变得可接受的前提。
- *
- * 仍然要留着这个刹车：它是**循环失控**的兜底，不是配额。
- * 撞上限时的损失也比想象中小 —— 每次工具调用是独立开库落库再关库的，
- * **已经写进库的东西不会丢**，重发一条指令就能接着往下做。
+ * ── 现在为什么是 50 ──
+ * 调度纪律已经改为**一轮只做一个生成阶段**（程序层由 ./turnGate.ts 强制：
+ * 同轮第二次生成调用、或生成后同轮落库，都会被拦下）。
+ * 一个阶段的一轮典型消耗：读状态 0 步（注入）、读库 1-2 次、生成 1 次、汇报 1 步，
+ * 远够不到 50。这个数字只防**循环失控**：若模型陷入无意义的工具循环，
+ * 撞上限即停 —— 已落库的内容不丢（每次工具调用独立开库关库），
+ * 重发一条指令就能接着做。**不许再把它调高去迁就"一条指令做完所有事"。**
  */
-export const SAGENT_RECURSION_LIMIT = 200
+export const SAGENT_RECURSION_LIMIT = 50
 
 /* ==================== token 估算 ==================== */
 
@@ -239,6 +236,9 @@ export function createSAgent(model: BaseChatModel = createModel(0.3)) {
     // 它是**缓存**——真身在数据库，每次调模型前由 novelStateSync 重新推导，见 ./stateLite.ts
     stateSchema: NovelState,
     middleware: [
+      // ⓪ 阶段闸门：一轮只允许一个生成阶段；生成与落库不许同轮；落库只能采纳待审核草案。
+      //    放在最外面 —— 它是对话纪律的硬边界，其它中间件不参与这个判断。
+      turnGate(),
       // ① 状态同步：把状态刷成库里的实际情况
       //    放在最前面——后面两个中间件要按真实进度做判断
       novelStateSync(),
@@ -257,8 +257,8 @@ export function createSAgent(model: BaseChatModel = createModel(0.3)) {
     ],
     name: "SAgent",
     description:
-      "中心 agent。唯一与作者对话、也是唯一做编排的角色。" +
-      "它自己产出任何设定/大纲/正文，只决定每一步该调哪个子 agent、以及把结果落到库里的哪张表。",
+      "中心 agent。唯一与作者对话、也是唯一做编排的角色。它自己**不**产出任何设定/大纲/正文，" +
+      "只决定这一轮做哪个阶段、该调哪个子 agent；产出以草案交作者审核，采纳后才落库。",
   })
 }
 

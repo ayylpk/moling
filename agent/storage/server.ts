@@ -2,6 +2,7 @@ import {
   catalog,
   chapter as chapterApi,
   character as characterApi,
+  draft as draftApi,
   flavor as flavorApi,
   location as locationApi,
   memory as memoryApi,
@@ -10,6 +11,7 @@ import {
   world as worldApi,
   type ChapterOutlineInput,
   type ChapterOutlinePatch,
+  type DraftStage,
   type TextStage,
   type WorldInput,
   type NovelCreateInput,
@@ -419,6 +421,60 @@ const server = Bun.serve({
         }
       }
 
+      /* ==================== 草案动线（生成 → 审核 → 采纳/放弃） ==================== */
+      if (novelPath && parts[3] === 'drafts') {
+        const novelId = novelIdOf(parts[2])
+
+        // 待审核草案清单（页面刷新后从这里恢复）
+        if (!parts[4] && request.method === 'GET') {
+          const stage = url.searchParams.get('stage') as DraftStage | null
+          return json(draftApi.listDrafts(novelId, stage ?? undefined))
+        }
+        // 放弃草案：DELETE ?stage=&key=（key 省略 = 清这个阶段的全部草案）
+        if (!parts[4] && request.method === 'DELETE') {
+          const stage = url.searchParams.get('stage') as DraftStage | null
+          if (!stage) return bad('缺少 stage：world / cast / volume_outline / prose / decision')
+          return json(draftApi.clearDraft(novelId, stage, url.searchParams.get('key') ?? undefined))
+        }
+
+        // 采纳：POST /drafts/adopt { stage, key? } —— 写正式表（含记忆副作用）并清草案
+        if (parts[4] === 'adopt' && request.method === 'POST') {
+          const body = await request.json() as { stage?: string; key?: string }
+          if (!body.stage || !['world', 'cast', 'volume_outline', 'prose'].includes(body.stage)) {
+            return bad('stage 必须是 world / cast / volume_outline / prose')
+          }
+          return json(draftApi.adoptDraft(novelId, body.stage as 'world' | 'cast' | 'volume_outline' | 'prose', body.key))
+        }
+
+        // 生成：POST /drafts/generate/world | volume-outline | prose —— 一次调用 = 一个阶段
+        if (parts[4] === 'generate' && request.method === 'POST') {
+          const body = await request.json().catch(() => ({})) as Record<string, never>
+          if (parts[5] === 'world') {
+            return json(await draftApi.generateWorldDraft(novelId, String(body.need ?? ''), body.name === undefined ? undefined : String(body.name)), 201)
+          }
+          if (parts[5] === 'volume-outline') {
+            return json(await draftApi.generateVolumeOutlineDraft(novelId, {
+              range: String(body.range ?? ''),
+              need: String(body.need ?? ''),
+              previous: body.previous === undefined ? undefined : String(body.previous),
+              volumeNo: body.volumeNo === undefined ? undefined : Number(body.volumeNo),
+              name: body.name === undefined ? undefined : String(body.name),
+              goal: body.goal === undefined ? undefined : String(body.goal),
+              fromState: body.fromState === undefined ? undefined : String(body.fromState),
+              toState: body.toState === undefined ? undefined : String(body.toState),
+            }), 201)
+          }
+          if (parts[5] === 'prose') {
+            const chapterIdx = Number(body.chapterIdx)
+            return json(await draftApi.generateProseDraft(novelId, chapterIdx, {
+              previous: body.previous === undefined ? undefined : String(body.previous),
+              decisions: body.decisions === undefined ? undefined : String(body.decisions),
+            }), 201)
+          }
+          return bad('生成阶段必须是 generate/world、generate/volume-outline 或 generate/prose')
+        }
+      }
+
       /* ==================== 工作流 ==================== */
       if (novelPath && parts[3] === 'workflow' && request.method === 'GET') {
         // 只回简化结构（阶段 + 各阶段计数），不回 generation_tasks 的原始字段 —— 那是内部实现
@@ -466,10 +522,12 @@ const server = Bun.serve({
           : []
         const agent = chatAgents.get(novelId) ?? createSAgent()
         chatAgents.set(novelId, agent)
+        // turnId：一次请求 = 一轮。阶段闸门（SAgent/turnGate.ts）按它记账，
+        // 强制"一轮只做一个生成阶段"——这是程序边界，不是提示词纪律。
+        const turnId = `${novelId}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`
         const result = await agent.invoke(
           { novelId, slug: novel.slug, messages: [...history, { role: 'user', content: body.message.trim() }] },
-          // recursionLimit 必须显式给，不能吃 LangGraph 的默认 25 —— 详见 SAgent/agent.ts
-          { recursionLimit: SAGENT_RECURSION_LIMIT, configurable: { novelId } },
+          { recursionLimit: SAGENT_RECURSION_LIMIT, configurable: { novelId, turnId } },
         )
         const messages = (result as { messages?: Array<{ getType?: () => string; content?: unknown }> }).messages ?? []
         const answer = [...messages].reverse().find((item) => item.getType?.() === 'ai' || typeof item.content === 'string')?.content
@@ -483,16 +541,31 @@ const server = Bun.serve({
       if (error instanceof TypeError) return bad(message, 400)
       if (/^小说不存在/.test(message)) return bad(message, 404)
       /*
-       * 步数上限不是"服务器炸了"，是"这一轮要求它做的事太多"。
-       * LangGraph 原样抛的是英文 `Recursion limit ... reached` 再加一个 docs 链接，
-       * 作者看到等于没看到。换成一句人话，并明确告诉他**已经落库的东西没丢** ——
-       * 每次工具调用是独立开库落库再关库的，所以重发一条指令就能接着往下做。
+       * 步数上限不是"服务器炸了"，是兜底刹车被撞了（正常一轮只做一个生成阶段，
+       * 远用不完 50 步 —— 撞上说明模型陷入了循环）。汇报要说清三件事：
+       * 已完成/已保存什么、还有什么没做、下一步给一条能直接复制的指令。
        */
       if (/recursion limit/i.test(message)) {
+        const pending = (() => {
+          try {
+            if (!novelPath) return []
+            return draftApi.listDrafts(novelIdOf(parts[2]!)).map((draft) =>
+              draft.stage === 'prose'
+                ? `正文第 ${draft.targetKey} 章`
+                : draft.stage === 'volume_outline'
+                  ? `卷纲（${draft.targetKey}）`
+                  : draft.stage,
+            )
+          } catch { return [] }
+        })()
+        const pendingNote = pending.length
+          ? `有一份**待审核草案还没处理**：${pending.join('、')} —— 它已保存，采纳或放弃由你决定。`
+          : '本轮没有留下待审核草案。'
         return bad(
-          `这一轮超过了单次上限（${SAGENT_RECURSION_LIMIT} 步），已经停下。`
-          + '**已经写进库的内容不会丢**，直接重发一条指令，它会从当前进度接着做。'
-          + '想看它到哪了，去执笔模式的画布看那六盏灯。',
+          `这一轮的要求超出了单次步数上限（${SAGENT_RECURSION_LIMIT} 步），已停下兜底。`
+          + `${pendingNote} `
+          + '已经写进库的内容不会丢。下一步直接发一条只做一件事的指令，例如：'
+          + '「生成世界观草案」「采纳世界观」「生成第 1–10 章卷纲草案」「生成第 1 章正文草案」。',
           400,
         )
       }

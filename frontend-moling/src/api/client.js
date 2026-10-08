@@ -139,6 +139,25 @@ export const api = {
     return { blob: await response.blob(), filename };
   },
 
+  /* ==================== 草案动线（生成 → 审核 → 采纳/放弃） ==================== */
+  /** 待审核草案清单。页面刷新后从这里恢复"待审核"状态 —— 草案活在后端库里，不在前端内存 */
+  listDrafts: (novelId, stage) => request(`/api/novels/${novelId}/drafts${stage ? `?stage=${stage}` : ''}`),
+  /** 生成世界观草案（一次调用 = 一个阶段；覆盖旧草案，不动正式表） */
+  generateWorldDraft: (novelId, need, name) =>
+    request(`/api/novels/${novelId}/drafts/generate/world`, { method: 'POST', body: JSON.stringify({ need, name }) }),
+  /** 生成卷纲（含该段章纲）草案。range 必填（如「第 1–10 章」）；前置：世界观已落库 */
+  generateVolumeOutlineDraft: (novelId, payload) =>
+    request(`/api/novels/${novelId}/drafts/generate/volume-outline`, { method: 'POST', body: JSON.stringify(payload) }),
+  /** 生成一章正文（止于待审核草案，不写终稿）。前置：世界观 + 该章章纲已落库 */
+  generateProseDraft: (novelId, chapterIdx, extra = {}) =>
+    request(`/api/novels/${novelId}/drafts/generate/prose`, { method: 'POST', body: JSON.stringify({ chapterIdx, ...extra }) }),
+  /** 采纳草案：写正式表（含记忆副作用）并清掉草案 */
+  adoptDraft: (novelId, stage, key) =>
+    request(`/api/novels/${novelId}/drafts/adopt`, { method: 'POST', body: JSON.stringify({ stage, key }) }),
+  /** 放弃草案：只清草案，正式表与其它阶段不受影响 */
+  discardDraft: (novelId, stage, key) =>
+    request(`/api/novels/${novelId}/drafts?stage=${stage}${key ? `&key=${encodeURIComponent(key)}` : ''}`, { method: 'DELETE' }),
+
   /* ==================== 动态画像与工作流状态 ==================== */
   /**
    * 每个角色最新一版动态画像（profile/tags/依据条数）。

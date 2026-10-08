@@ -43,6 +43,8 @@ export * as catalog from './controller/catalogController'
 export * as flavor from './controller/flavorController'
 export * as state from './controller/stateController'
 export * as writing from './controller/writingController'
+// 草案动线（生成 → 审核 → 采纳/放弃）：中心 Agent 的工具与 HTTP 草案接口都从这里走
+export * as draft from './controller/draftController'
 
 // ── 目录库（书架） ──
 // 目录级元数据不属于任何一本书，所以没有 novelId 可言，是它自己的一层。
@@ -68,6 +70,8 @@ export type {
   TextStage,
 } from './db/chapterDB'
 export type { DecisionInput, ActorDecision } from './db/actorDecisionDB'
+export type { Draft, DraftStage } from './db/draftDB'
+export type { VolumeOutlineDraftContent, ProseDraftContent } from './service/draftService'
 export type { VolumeOutlineBundle, ChapterOutlineSaveReport } from './service/entityService'
 export type { WorkflowSummary, StageCounts, WorkflowStage } from './service/workflowService'
 export type { ChapterContext } from './controller/chapterController'

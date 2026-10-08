@@ -70,6 +70,23 @@ describe('center agent chapter workflow', () => {
     expect(result.error).toContain('writer unavailable')
     expect(result.finalText).toBeUndefined()
   })
+
+  /**
+   * 2026-10-08 新增：正文产出止于待审核草案。
+   * finalize=false 时**不许写终稿**（save 不被调到 stage='final'），
+   * 也不许收"终稿已保存"的假账（save-final 记 skipped）——
+   * 终稿由草案采纳流程在作者确认之后写。
+   */
+  test('finalize=false stops at the polished draft and never saves final', async () => {
+    const calls: string[] = []
+    const result = await createChapterWorkflow(deps({
+      save: async (input) => { calls.push(`save:${input.stage}`) },
+    }))({ novelId: 7, chapterIdx: 3, finalize: false })
+
+    expect(calls).toEqual(['save:draft'])
+    expect(result).toMatchObject({ status: 'done', finalText: '终稿正文' })
+    expect(result.steps.find((step) => step.name === 'save-final')?.status).toBe('skipped')
+  })
 })
 
 /**

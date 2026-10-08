@@ -1,6 +1,6 @@
 export type ChapterDraft = { text: string; summary?: string; endsWith?: string }
 export type ChapterPolish = { text: string; report?: unknown }
-export type ChapterWorkflowInput = { novelId: number; chapterIdx: number; previous?: string; decisions?: string }
+export type ChapterWorkflowInput = { novelId: number; chapterIdx: number; previous?: string; decisions?: string; /** false = 产出止于润色稿，**不写终稿**（终稿由草案采纳流程写）；缺省 true = 老行为 */ finalize?: boolean }
 export type ChapterSaveInput = ChapterDraft & { novelId: number; chapterIdx: number; stage: 'draft' | 'final'; polishReport?: unknown }
 export type ChapterClaimInput = ChapterWorkflowInput & { stage: 'chapter'; targetKey: string }
 export type ChapterWorkflowStep = { name: 'plan' | 'claim' | 'write' | 'save-draft' | 'polish' | 'save-final' | 'finish'; status: 'done' | 'skipped' }
@@ -21,6 +21,7 @@ export type ChapterWorkflowResult = {
   taskId?: number
   status: 'done' | 'failed'
   finalText?: string
+  polishReport?: unknown
   error?: string
   steps: ChapterWorkflowStep[]
 }
@@ -62,12 +63,21 @@ export const createChapterWorkflow = (deps: ChapterWorkflowDeps) => async (input
       )
     }
     steps.push({ name: 'polish', status: 'done' })
+    if (input.finalize === false) {
+      // 产出止于润色稿：不写终稿、不收"终稿已保存"的假账。
+      // 终稿由草案采纳流程（采纳 = 作者确认过的动作）负责写。
+      steps.push({ name: 'save-final', status: 'skipped' })
+      if (taskId === undefined) throw new Error('章节任务缺少 taskId，无法收尾')
+      await deps.finish({ novelId: input.novelId, chapterIdx: input.chapterIdx, taskId })
+      steps.push({ name: 'finish', status: 'done' })
+      return { ...input, taskId, status: 'done', finalText: polished.text, polishReport: polished.report, steps }
+    }
     await deps.save({ ...draft, ...polished, ...input, stage: 'final', polishReport: polished.report })
     steps.push({ name: 'save-final', status: 'done' })
     if (taskId === undefined) throw new Error('章节任务缺少 taskId，无法收尾')
     await deps.finish({ novelId: input.novelId, chapterIdx: input.chapterIdx, taskId })
     steps.push({ name: 'finish', status: 'done' })
-    return { ...input, taskId, status: 'done', finalText: polished.text, steps }
+    return { ...input, taskId, status: 'done', finalText: polished.text, polishReport: polished.report, steps }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     if (deps.fail) await deps.fail({ ...input, taskId, error: message })

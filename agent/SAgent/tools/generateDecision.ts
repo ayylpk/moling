@@ -3,7 +3,7 @@ import * as z from 'zod'
 
 import { createActorAgent, type Actor, type ActorScene } from '../../Actor/agent'
 import { buildActorPrompt } from '../../Actor/prompt'
-import { character as characterApi } from '../../my-app'
+import { character as characterApi, draft as draftApi } from '../../my-app'
 import { flavorOf, novelIdOf, pack } from './context'
 
 /**
@@ -32,7 +32,8 @@ import { flavorOf, novelIdOf, pack } from './context'
 export const generateDecision = tool(
   async ({ name, story, situation, options, chatPrompt }, config) => {
     // ① 同步取卡（这一跳结束就关库；模型调用期间不需要连接）
-    const full = characterApi.getCharacterByName(novelIdOf(config), name)
+    const novelId = novelIdOf(config)
+    const full = characterApi.getCharacterByName(novelId, name)
     const actor = ((full): Actor => {
       if (!full) {
         throw new Error(
@@ -60,7 +61,11 @@ export const generateDecision = tool(
       messages: [{ role: 'user', content: buildActorPrompt({ actor, scene }) }],
     })
 
-    return pack(`角色裁决（${actor.name}，草案未落库）`, res.structuredResponse)
+    const decision = res.structuredResponse
+    // 草案先落 drafts 表（stage='decision'）：save_actor_decision 只能采纳它
+    const key = `${actor.name}:${situation.slice(0, 24)}`
+    const stored = draftApi.saveDraft(novelId, 'decision', key, decision ?? {})
+    return pack(`角色裁决（${actor.name}，待审核草案未落库｜${stored.updatedAt}）`, decision)
   },
   {
     name: 'generate_decision',
@@ -72,7 +77,7 @@ export const generateDecision = tool(
       '否则它只会顺着你的预期答「对」，而且不会报错，只会安静地失效。' +
       '★ story 里只写**这个角色知道的**部分（他不知道的写进去，模拟就不可信了）。' +
       '★ 角色卡必须先落库（它按名字去库里取卡），否则工具会报错。' +
-      '★ 它只返回内容，**不落库**；要保存接着调 save_actor_decision。',
+      '★ 它会把结果存为**待审核草案**；调用完必须停下，把裁决交给作者看，他采纳后（下一轮）才能调 save_actor_decision。一轮不许再发起第二个生成动作。',
     schema: z.object({
       name: z.string().describe('要扮演哪个角色（用角色卡上的名字）。'),
       story: z.string().describe('此前发生了什么。只写这个角色知道的部分。'),

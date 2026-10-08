@@ -28,6 +28,12 @@ const NOVEL_SCHEMA = [
   `CREATE VIRTUAL TABLE IF NOT EXISTS memory_items_fts USING fts5(title, content, content='memory_items', content_rowid='id', tokenize='unicode61')`,
   `CREATE TABLE IF NOT EXISTS character_portraits (id INTEGER PRIMARY KEY AUTOINCREMENT, novel_id TEXT NOT NULL, character_id INTEGER NOT NULL, version INTEGER NOT NULL, profile TEXT NOT NULL, tags TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(tags)), based_on_fact_ids TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(based_on_fact_ids)), memory_id INTEGER, updated_at TEXT NOT NULL DEFAULT(datetime('now','localtime')), UNIQUE(novel_id, character_id, version))`,
   `CREATE TABLE IF NOT EXISTS memory_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, memory_id INTEGER NOT NULL UNIQUE REFERENCES memory_items(id) ON DELETE CASCADE, novel_id TEXT NOT NULL, payload TEXT NOT NULL CHECK(json_valid(payload)), status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','running','done','failed')), attempts INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT(datetime('now','localtime')), updated_at TEXT NOT NULL DEFAULT(datetime('now','localtime')))` ,
+  /**
+   * 待审核草案 —— 生成结果先落这里，作者采纳后才写正式表。
+   * target_key：world/decision 固定空串；cast 是角色或地点名；volume_outline 是章号段
+   * （如「1-13」）；prose 是章号。UNIQUE(stage, target_key) = 重生成只覆盖草案，不堆行。
+   */
+  `CREATE TABLE IF NOT EXISTS drafts (id INTEGER PRIMARY KEY AUTOINCREMENT, stage TEXT NOT NULL CHECK(stage IN ('world','cast','volume_outline','prose','decision')), target_key TEXT NOT NULL DEFAULT '', content TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT(datetime('now','localtime')), updated_at TEXT NOT NULL DEFAULT(datetime('now','localtime')), UNIQUE(stage, target_key))`,
 ]
 
 export const ensureStorageRoot = (): void => { fs.mkdirSync(novelsDir, { recursive: true }) }

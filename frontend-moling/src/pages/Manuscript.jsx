@@ -4,16 +4,21 @@ import { useWorkbench } from '../layout/WorkbenchLayout.jsx';
 import { api } from '../api/client.js';
 
 /**
- * 书稿：卷目录 + 正文编辑。
+ * 书稿：卷目录 + 正文编辑 + 章节草案审核。
  *
- * 数据来自当前基座（agent/storage/server.ts）的三条接口：
+ * 数据来自当前基座（agent/storage/server.ts）的接口：
  *   GET /api/novels/:id/volumes         —— 卷表（卷号 / 卷名 / 起止章）
  *   GET /api/novels/:id/chapters        —— 章表（含 volumeId / 章纲五字段 / textStage）
  *   GET / PUT /api/chapters/:id/text    —— 某一阶段正文
+ *   GET /api/novels/:id/drafts?stage=prose —— 待审核的正文草案
  *
  * 卷**以卷表为准**（卷名与卷号是真的），章按 volumeId 挂到卷下；
  * 万一卷表还没建（只落了章纲），退回按 volumeId 现推、卷号只能用序号。
  *
+ * ── 草案动线（10/8）──
+ * 「生成当前章正文」产出的是**待审核草案**（后端 drafts 表，刷新不丢）：
+ * 审核区给出「采纳终稿 / 放弃本次结果」，采纳才写终稿并触发记忆链路。
+ * 生成失败时错误显示在页面上（不在弹窗里），并保留重试按钮。
  * 保存三层兜底：确认按钮即时存 → 改动后 10 秒自动存 → 离开页面前再存一次；
  * 每次落盘前先写 localStorage，API 不通时至少不丢字。
  */
@@ -38,6 +43,18 @@ export default function Manuscript() {
   const [picked, setPicked] = useState(() => new Set());
   const [exporting, setExporting] = useState(false);
   const [notice, setNotice] = useState('');
+
+  /* ---------- 章节草案（待审核的正文） ---------- */
+  const [proseDrafts, setProseDrafts] = useState([]);
+  const [hasWorld, setHasWorld] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [acting, setActing] = useState('');
+  const [genError, setGenError] = useState('');
+
+  const loadProseDrafts = (novelId, active) =>
+    api.listDrafts(novelId, 'prose')
+      .then((items) => { if (active) setProseDrafts(Array.isArray(items) ? items : []); })
+      .catch(() => { if (active) setProseDrafts([]); });
 
   /* 卷：以卷表为准（卷名/卷号是真的），章按 volumeId 挂上去 */
   const volumes = useMemo(() => {
@@ -69,19 +86,23 @@ export default function Manuscript() {
     }
     let active = true;
     setLoaded(false);
+    setGenError('');
     Promise.all([
       api.listChapters(novel.id).catch(() => []),
       api.listVolumes(novel.id).catch(() => []),
+      api.listWorlds(novel.id).catch(() => []),
     ])
-      .then(([items, rows]) => {
+      .then(([items, rows, worlds]) => {
         if (!active) return;
         const chapterList = Array.isArray(items) ? items : [];
         setChapters(chapterList);
         setVolumeRows(Array.isArray(rows) ? rows : []);
+        setHasWorld(Array.isArray(worlds) && worlds.length > 0);
         setVolumeId(chapterList[0]?.volumeId ?? null);
         setChapterId(chapterList[0]?.id ?? null);
       })
       .finally(() => { if (active) setLoaded(true); });
+    loadProseDrafts(novel.id, active);
     return () => { active = false; };
   }, [novel?.id]);
 
@@ -145,6 +166,47 @@ export default function Manuscript() {
   const selectChapter = (nextId) => {
     if (dirty) saveText();
     setChapterId(nextId);
+  };
+
+  /* ---------- 章节草案动作：生成 → 审核 → 采纳/放弃 ---------- */
+
+  /** 当前章的待审核草案（targetKey = 章号；正文草案一次只对一章） */
+  const chapterProseDraft = proseDrafts.find((item) => String(item.targetKey) === String(chapter?.idx)) ?? null;
+  const chapterDraftContent = chapterProseDraft?.parsed ?? null;
+
+  const refreshChapters = async () => {
+    const items = await api.listChapters(novel.id).catch(() => []);
+    if (Array.isArray(items)) setChapters(items);
+  };
+
+  const generateProse = async () => {
+    if (!novel?.id || !chapter || generating) return;
+    setGenerating(true); setGenError('');
+    try {
+      // 生成走后端编排：止于待审核草案，不写终稿（终稿等采纳）
+      await api.generateProseDraft(novel.id, chapter.idx);
+      await loadProseDrafts(novel.id, true);
+    } catch (cause) { setGenError(cause.message || '本章生成失败，可重试。'); } finally { setGenerating(false); }
+  };
+  const adoptProse = async () => {
+    if (!novel?.id || !chapterProseDraft) return;
+    setActing('adopt'); setGenError('');
+    try {
+      await api.adoptDraft(novel.id, 'prose', chapterProseDraft.targetKey);
+      await Promise.all([refreshChapters(), loadProseDrafts(novel.id, true)]);
+      // 采纳完直接把终稿读进编辑器
+      const final = await api.getChapterText(novel.id, chapter.id, 'final').catch(() => null);
+      if (final?.text) { setText(final.text); setDirty(false); }
+      setNotice('终稿已保存。');
+    } catch (cause) { setGenError(cause.message || '采纳失败。'); } finally { setActing(''); }
+  };
+  const discardProse = async () => {
+    if (!novel?.id || !chapterProseDraft) return;
+    setActing('discard'); setGenError('');
+    try {
+      await api.discardDraft(novel.id, 'prose', chapterProseDraft.targetKey);
+      await loadProseDrafts(novel.id, true);
+    } catch (cause) { setGenError(cause.message || '放弃失败。'); } finally { setActing(''); }
   };
 
   /* ---------- 导出 ---------- */
@@ -246,7 +308,7 @@ export default function Manuscript() {
             </button>
           )}
           <button type="button" className="btn btn--primary" disabled={!dirty} onClick={() => saveText()}>
-            确认保存
+            保存草稿
           </button>
         </div>
       </div>
@@ -327,12 +389,55 @@ export default function Manuscript() {
                   <span>章节浮签</span>
                   <span className="anno">chapter · {chapter.idx}</span>
                 </div>
+                {/* 生成与审核：一次只对一章；错误显示在页面上，不在弹窗里 */}
+                <div className="field">
+                  <p className="field__k">生成与审核</p>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 6 }}>
+                    <button
+                      type="button"
+                      className="btn btn--primary btn--sm"
+                      disabled={!hasWorld || generating || acting !== ''}
+                      onClick={generateProse}
+                      title={hasWorld ? '产出待审核草案，不会直接写终稿' : '先到世界观页采纳一份草案'}
+                    >
+                      {generating ? '正在生成…' : chapterProseDraft ? '重新生成当前章' : '生成当前章正文'}
+                    </button>
+                    {chapterProseDraft && (
+                      <>
+                        <button type="button" className="btn btn--sm" disabled={generating || acting !== ''} onClick={adoptProse}>
+                          {acting === 'adopt' ? '正在保存…' : '采纳终稿'}
+                        </button>
+                        <button type="button" className="btn btn--sm" disabled={generating || acting !== ''} onClick={discardProse}>
+                          {acting === 'discard' ? '正在放弃…' : '放弃本次结果'}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                  {generating && <p className="anno" style={{ marginTop: 6 }}>正在生成第 {chapter.idx} 章正文……只做这一个阶段，完成后停下来等你审核。</p>}
+                  {genError && (
+                    <p className="novel-form__error" style={{ marginTop: 6 }}>
+                      {genError}{' '}
+                      <button type="button" className="btn btn--sm" disabled={generating || acting !== ''} onClick={generateProse}>重试</button>
+                    </p>
+                  )}
+                </div>
+                {chapterProseDraft && (
+                  <div className="field">
+                    <p className="field__k">待审核草案 · 第 {chapter.idx} 章</p>
+                    <p className="field__v anno" style={{ marginTop: 4 }}>
+                      润色稿约 {(String(chapterDraftContent?.text ?? '').length).toLocaleString()} 字 · {chapterProseDraft.updatedAt || ''} · 采纳后才成为终稿并进入记忆链路
+                    </p>
+                    <p className="field__v field__v--prose" style={{ marginTop: 6, whiteSpace: 'pre-wrap', maxHeight: 180, overflow: 'auto' }}>
+                      {String(chapterDraftContent?.text ?? '').slice(0, 600)}{String(chapterDraftContent?.text ?? '').length > 600 ? '……（完整内容在左侧编辑区可对照初稿）' : ''}
+                    </p>
+                  </div>
+                )}
                 {chapter.goal && <div className="field"><p className="field__k">本章目标</p><p className="field__v">{chapter.goal}</p></div>}
                 <div className="field"><p className="field__k">结尾钩子</p><p className="field__v">{chapter.hook || '—'}</p></div>
                 <div className="field"><p className="field__k">情绪落点</p><p className="field__v">{chapter.emotion || '—'}</p></div>
                 <div className="field">
                   <p className="field__k">保存规则</p>
-                  <p className="field__v anno">确认按钮即时保存；修改后 10 秒自动保存；离开页面前再保存一次。</p>
+                  <p className="field__v anno">「保存草稿」即时保存；修改后 10 秒自动保存；离开页面前再保存一次。终稿由「采纳终稿」写入。</p>
                 </div>
               </>
             ) : (

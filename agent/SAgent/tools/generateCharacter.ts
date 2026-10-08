@@ -3,7 +3,7 @@ import * as z from 'zod'
 
 import { createCharacterAgent } from '../../Character/agent'
 import { buildCharacterPrompt } from '../../Character/prompt'
-import { character as characterApi } from '../../my-app'
+import { character as characterApi, draft as draftApi } from '../../my-app'
 import { flavorOf, novelIdOf, novelOf, pack, renderWorld } from './context'
 
 /**
@@ -54,7 +54,11 @@ export const generateCharacter = tool(
       ],
     })
 
-    return pack('角色卡（草案，未落库）', res.structuredResponse)
+    const card = res.structuredResponse as { name?: string } | undefined
+    // 草案先落 drafts 表（stage='cast'，按名字记账）：采纳（save_character / 页面按钮）才有对象
+    const key = String(card?.name ?? '').trim() || `need:${need.slice(0, 24)}`
+    const stored = draftApi.saveDraft(novelId, 'cast', key, card ?? {})
+    return pack(`角色卡（待审核草案，未落库｜${stored.updatedAt}）`, card)
   },
   {
     name: 'generate_character',
@@ -63,7 +67,7 @@ export const generateCharacter = tool(
       '★ 一次只造一个：批量造会从第三五个开始退化成模板。' +
       '★ 世界观必须先落库（角色以世界为硬约束），否则工具会报错。' +
       '★ 它会带上场上已有角色的名单，避免重复造人。' +
-      '★ 它只返回内容，**不落库**；要保存接着调 save_character（采纳与否由你判断）。',
+      '★ 它会把结果存为**待审核草案**，不落正式表；调用完必须停下交作者审核，他采纳后（下一轮）才能调 save_character。一轮不许再发起第二个生成动作。',
     schema: z.object({
       need: z.string().describe('这个角色是谁、要承担什么戏剧功能、和已有角色什么关系。'),
     }),
